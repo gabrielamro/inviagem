@@ -1,0 +1,7 @@
+{
+  "name": "Inviagem",
+  "description": "Ride-hailing platform with Passenger, Driver, and Admin apps.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
