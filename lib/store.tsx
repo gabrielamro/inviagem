@@ -98,6 +98,16 @@ export interface User {
   rejectionReason?: string; // Motivo da recusa para o motorista corrigir
 }
 
+export interface Violation {
+  id: string;
+  driverId: string;
+  violationTime: string;
+  lastKnownLocation: { lat: number; lng: number };
+  addressText: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+  status: 'PENDING' | 'REVIEWED' | 'RESOLVED';
+}
+
 export interface Hotspot {
   id: string;
   lat: number;
@@ -137,6 +147,8 @@ interface StoreContextType {
   updateDriverClearance: (userId: string, status: 'PENDING_DOCS' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED', reason?: string) => Promise<void>;
   addWalletBalance: (userId: string, amount: number) => void;
   deleteDriverAccount: (userId: string) => Promise<boolean>;
+  violations: Violation[];
+  resolveViolation: (id: string) => Promise<void>;
   isDemoMode: boolean;
   setDemoMode: (enabled: boolean) => void;
   immuTaxCollected: number; // Variável global pro tesouro municipal
@@ -149,6 +161,39 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // Carrega corridas do Supabase
   useEffect(() => {
+    const fetchAllUsers = async () => {
+      const { data: drivers, error: dError } = await supabase.from('drivers').select('*');
+      const { data: passengers, error: pError } = await supabase.from('passengers').select('*');
+
+      if (!dError && !pError && drivers && passengers) {
+        const allUsers: User[] = [
+          ...drivers.map(d => ({
+            id: d.id,
+            name: d.name,
+            role: 'DRIVER' as const,
+            cpf: d.cpf,
+            driverStatus: d.driver_status,
+            walletBalance: d.wallet_balance,
+            status: d.status,
+            location: d.location,
+            vehicle: d.vehicle,
+            cnhUrl: d.cnh_url,
+            certificationUrl: d.certification_url,
+            profilePhotoUrl: d.profile_photo_url,
+            rejectionReason: d.rejection_reason
+          })),
+          ...passengers.map(p => ({
+            id: p.id,
+            name: p.name,
+            role: 'PASSENGER' as const,
+            walletBalance: p.wallet_balance
+          })),
+          { id: 'admin_001', name: 'Gabriela Amaro', role: 'ADMIN' as const }
+        ];
+        setUsers(allUsers);
+      }
+    };
+
     const fetchActiveRides = async () => {
       const { data, error } = await supabase
         .from('rides')
@@ -161,70 +206,47 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    fetchActiveRides();
+    const fetchViolations = async () => {
+      const { data, error } = await supabase
+        .from('geo_fence_violations')
+        .select('*')
+        .order('violation_time', { ascending: false });
 
-    // Assinatura Live do Supabase Realtime (Coração do App)
-    const channel = supabase.channel('rides_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, payload => {
-        if (payload.eventType === 'INSERT') {
-          setRides(prev => [mapSupabaseRideToFront(payload.new), ...prev]);
-        } else if (payload.eventType === 'UPDATE') {
-          setRides(prev => prev.map(ride => ride.id === payload.new.id ? mapSupabaseRideToFront(payload.new) : ride));
-        } else if (payload.eventType === 'DELETE') {
-          setRides(prev => prev.filter(ride => ride.id !== payload.old.id));
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, []);
-
-  // Carrega Usuários do Supabase (Para o Admin Panel)
-  useEffect(() => {
-    const fetchUsers = async () => {
-      // Usando inner join do postgREST para trazer veículos atrelados
-      const { data, error } = await supabase.from('users').select('*, vehicles(*)');
       if (!error && data) {
-        setUsers(data.map(row => {
-          let vehicleInfo;
-          if (row.vehicles && row.vehicles.length > 0) {
-            const v = row.vehicles[0];
-            vehicleInfo = {
-              plate: v.plate,
-              brand: v.brand,
-              model: v.model,
-              year: v.manufacturing_year,
-              color: v.color,
-              capacity: v.maximum_capacity,
-              crlvUrl: v.crlv_url
-            }
-          }
-
-          return {
-            id: row.id,
-            name: row.name,
-            role: row.role,
-            cpf: row.cpf,
-            driverStatus: row.driver_status,
-            walletBalance: row.wallet_balance,
-            status: row.status,
-            location: row.location ? { lat: row.location.lat, lng: row.location.lng, address: row.address_text || '' } : undefined,
-            vehicle: vehicleInfo,
-            cnhUrl: row.cnh_url,
-            certificationUrl: row.certification_url,
-            profilePhotoUrl: row.profile_photo_url, // Mapeia do banco
-            rejectionReason: row.rejection_reason,
-          };
-        }));
+        setViolations(data.map(v => ({
+          id: v.id,
+          driverId: v.driver_id,
+          violationTime: v.violation_time,
+          lastKnownLocation: { lat: v.last_known_location.lat, lng: v.last_known_location.lng },
+          addressText: v.address_text,
+          severity: v.severity,
+          status: v.status
+        })));
       }
     };
-    fetchUsers();
 
-    const usersChannel = supabase.channel('users_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, fetchUsers) // recarrega a lista se houver alteração
+    fetchActiveRides();
+    fetchAllUsers();
+    fetchViolations();
+
+    // Assinaturas Realtime
+    const driversChannel = supabase.channel('drivers_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, fetchAllUsers)
       .subscribe();
 
-    return () => { supabase.removeChannel(usersChannel); };
+    const passengersChannel = supabase.channel('passengers_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'passengers' }, fetchAllUsers)
+      .subscribe();
+
+    const violationsChannel = supabase.channel('violations_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'geo_fence_violations' }, fetchViolations)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(driversChannel);
+      supabase.removeChannel(passengersChannel);
+      supabase.removeChannel(violationsChannel);
+    };
   }, []);
 
   const mapSupabaseRideToFront = (row: any): Ride => ({
@@ -305,6 +327,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   ]);
 
+  const [violations, setViolations] = useState<Violation[]>([]);
+
+  const resolveViolation = useCallback(async (id: string) => {
+    setViolations(prev => prev.map(v => v.id === id ? { ...v, status: 'RESOLVED' } : v));
+    await supabase.from('geo_fence_violations').update({ status: 'RESOLVED' }).eq('id', id);
+  }, []);
+
   const addHotspot = useCallback((hotspot: Omit<Hotspot, 'id'>) => {
     setHotspots(prev => [...prev, { ...hotspot, id: `h_${Date.now()}` }]);
   }, []);
@@ -318,30 +347,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const registerUser = useCallback(async (userData: Omit<User, 'id'>) => {
+    const tableName = userData.role === 'PASSENGER' ? 'passengers' : 'drivers';
+    const insertData: any = {
+      name: userData.name,
+      cpf: userData.cpf,
+      wallet_balance: userData.walletBalance || 0,
+    };
+
+    if (userData.role === 'DRIVER') {
+      insertData.driver_status = userData.driverStatus || 'PENDING_DOCS';
+      insertData.status = userData.status || 'OFFLINE';
+    }
+
     const { data, error } = await supabase
-      .from('users')
-      .insert([
-        {
-          name: userData.name,
-          role: userData.role,
-          cpf: userData.cpf,
-          driver_status: userData.driverStatus,
-          wallet_balance: userData.walletBalance,
-          status: userData.status
-        }
-      ])
+      .from(tableName)
+      .insert([insertData])
       .select()
       .single();
 
     if (error) {
-      console.error("Erro ao registrar no Supabase:", error);
+      console.error(`Erro ao registrar ${userData.role} no Supabase:`, error);
       return null;
     }
 
     const newUser: User = {
       id: data.id,
       name: data.name,
-      role: data.role as any,
+      role: userData.role as any,
       cpf: data.cpf,
       driverStatus: data.driver_status,
       walletBalance: data.wallet_balance,
@@ -353,11 +385,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loginUser = useCallback(async (cpf: string, role: string) => {
+    const tableName = role === 'PASSENGER' ? 'passengers' : 'drivers';
     const { data, error } = await supabase
-      .from('users')
+      .from(tableName)
       .select('*')
       .eq('cpf', cpf)
-      .eq('role', role)
       .single();
 
     if (error || !data) {
@@ -368,7 +400,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const foundUser: User = {
       id: data.id,
       name: data.name,
-      role: data.role as any,
+      role: role as any,
       cpf: data.cpf,
       driverStatus: data.driver_status,
       walletBalance: data.wallet_balance,
@@ -455,15 +487,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           term_version: 'v1.0-IMMU'
         }]);
 
-      // 3. Atualiza status e URLs na tabela de Users
-      const userUpdate: any = { driver_status: 'UNDER_REVIEW' };
-      if (cnhUrl) userUpdate.cnh_url = cnhUrl;
-      if (certificationUrl) userUpdate.certification_url = certificationUrl;
-      if (profileUrl) userUpdate.profile_photo_url = profileUrl;
+      // 3. Atualiza status e URLs na tabela de Drivers
+      const driverUpdate: any = { driver_status: 'UNDER_REVIEW' };
+      if (cnhUrl) driverUpdate.cnh_url = cnhUrl;
+      if (certificationUrl) driverUpdate.certification_url = certificationUrl;
+      if (profileUrl) driverUpdate.profile_photo_url = profileUrl;
 
       const { error: userError } = await supabase
-        .from('users')
-        .update(userUpdate)
+        .from('drivers')
+        .update(driverUpdate)
         .eq('id', userId);
 
       if (userError) {
@@ -587,17 +619,32 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const updateUserLocation = useCallback((userId: string, location: Location) => {
+  const updateUserLocation = useCallback(async (userId: string, location: Location, role: 'DRIVER' | 'PASSENGER' = 'DRIVER') => {
+    // 1. Local update for UI snappiness
     setUsers((prev) =>
       prev.map((user) => (user.id === userId ? { ...user, location } : user))
     );
-  }, []);
+    if (currentUser?.id === userId) {
+      setCurrentUser(prev => prev ? { ...prev, location } : null);
+    }
 
-  const updateDriverStatus = useCallback((userId: string, status: 'OFFLINE' | 'ONLINE' | 'IN_RIDE') => {
+    // 2. Persist to DB
+    const tableName = role === 'PASSENGER' ? 'passengers' : 'drivers';
+    await supabase.from(tableName).update({
+      location: { lat: location.lat, lng: location.lng },
+      address_text: location.address
+    }).eq('id', userId);
+  }, [currentUser]);
+
+  const updateDriverStatus = useCallback(async (userId: string, status: 'OFFLINE' | 'ONLINE' | 'IN_RIDE') => {
+    // 1. Local update
     setUsers((prev) =>
       prev.map((user) => (user.id === userId ? { ...user, status } : user))
     );
     setCurrentUser(prev => (prev?.id === userId ? { ...prev, status } : prev));
+
+    // 2. Persist to DB
+    await supabase.from('drivers').update({ status }).eq('id', userId);
   }, []);
 
   const updateDriverClearance = useCallback(async (userId: string, driverStatus: 'PENDING_DOCS' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED', reason?: string) => {
@@ -620,7 +667,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 3. Update remote
-    const { error } = await supabase.from('users').update(updatePayload).eq('id', userId);
+    const { error } = await supabase.from('drivers').update(updatePayload).eq('id', userId);
 
     if (error) {
       console.error("Erro crítico ao sincronizar status com Supabase:", error);
@@ -648,8 +695,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 1. Delete vehicle first (foreign key dependency usually requires this)
       await supabase.from('vehicles').delete().eq('driver_id', userId);
 
-      // 2. Delete user
-      const { error } = await supabase.from('users').delete().eq('id', userId);
+      // 1.b Delete LGPD terms logs
+      await supabase.from('lgpd_terms_logs').delete().eq('user_id', userId);
+
+      // 2. Delete driver
+      const { error } = await supabase.from('drivers').delete().eq('id', userId);
 
       if (error) throw error;
 
@@ -783,6 +833,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         isDemoMode,
         setDemoMode,
         immuTaxCollected,
+        violations,
+        resolveViolation,
       }}
     >
       {children}

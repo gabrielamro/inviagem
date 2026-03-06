@@ -65,6 +65,8 @@ export default function DriverApp() {
   const [carHeading, setCarHeading] = useState(0);
   const [mapRef, setMapRef] = useState<google.maps.Map | null>(null);
   const routePolylineRef = useRef<google.maps.Polyline | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [surgePricingZones, setSurgePricingZones] = useState<{ id: number, lat: number, lng: number, value: number }[]>([]);
   const [heatmapLayer, setHeatmapLayer] = useState<google.maps.visualization.HeatmapLayer | null>(null);
@@ -168,6 +170,68 @@ export default function DriverApp() {
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, [currentUser, updateUserLocation, isAutoCenter, activeRide]);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+    } catch (err) {
+      console.error("Erro ao acessar câmera:", err);
+      // Fallback log
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (video.videoWidth === 0 || video.videoHeight === 0) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const file = new File([blob], 'biometry.jpg', { type: 'image/jpeg' });
+            setBiometryStep('SCANNING');
+            stopCamera();
+            setTimeout(() => {
+              setProfilePhotoFile(file);
+              setProfilePreviewUrl(URL.createObjectURL(file));
+              setBiometryStep('SUCCESS');
+              setTimeout(() => {
+                setIsBiometryActive(false);
+                setBiometryStep('IDLE');
+              }, 1500);
+            }, 2000);
+          }
+        }, 'image/jpeg');
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (isBiometryActive && biometryStep === 'IDLE') {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => stopCamera();
+  }, [isBiometryActive, biometryStep]);
 
   // Removido o login automático para permitir o fluxo real de cadastro e login
   // useEffect(() => {
@@ -666,53 +730,40 @@ export default function DriverApp() {
                 <div className="absolute inset-0 rounded-full border-2 border-white/20" />
                 <div className="absolute inset-2 rounded-full border border-dashed border-emerald-500/30 animate-spin" />
 
-                <label className="absolute inset-4 rounded-full overflow-hidden bg-white/5 flex items-center justify-center cursor-pointer group">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="user"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setBiometryStep('SCANNING');
-                        setTimeout(() => {
-                          setProfilePhotoFile(file);
-                          setProfilePreviewUrl(URL.createObjectURL(file));
-                          setBiometryStep('SUCCESS');
-                          setTimeout(() => {
-                            setIsBiometryActive(false);
-                            setBiometryStep('IDLE');
-                          }, 1500);
-                        }, 2000);
-                      }
-                    }}
+                <div className="absolute inset-4 rounded-full overflow-hidden bg-black flex items-center justify-center border border-white/10 group">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="absolute inset-0 w-full h-full object-cover scale-[1.2] -scale-x-100"
                   />
+                  <canvas ref={canvasRef} className="hidden" />
+
                   {biometryStep === 'IDLE' && (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-black">
-                        <Car size={32} />
-                      </div>
-                      <div className="bg-emerald-500 text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_rgba(16,185,129,0.4)]">
-                        Tirar Foto Agora
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-emerald-500 hover:bg-emerald-400 text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_rgba(16,185,129,0.4)] z-10 transition-colors"
+                    >
+                      Tirar Foto Agora
+                    </button>
                   )}
                   {biometryStep === 'SCANNING' && (
-                    <div className="flex flex-col items-center gap-4">
+                    <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-4 z-20">
                       <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                       <span className="text-[10px] font-black text-emerald-500 uppercase animate-pulse">Analisando...</span>
                     </div>
                   )}
                   {biometryStep === 'SUCCESS' && (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-black">
+                    <div className="absolute inset-0 bg-emerald-500/30 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-20">
+                      <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-black shadow-[0_0_20px_rgba(16,185,129,0.4)]">
                         <Check size={32} />
                       </div>
                       <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Sucesso</span>
                     </div>
                   )}
-                </label>
+                </div>
               </div>
 
               <button
@@ -792,10 +843,10 @@ export default function DriverApp() {
                 year: vehicleYear,
                 capacity: vehicleCapacity
               }, {
-                cnh: cnhFile,
-                crlv: crlvFile,
-                certification: certificationFile,
-                profile: profilePhotoFile
+                cnh: cnhFile || undefined,
+                crlv: crlvFile || undefined,
+                certification: certificationFile || undefined,
+                profile: profilePhotoFile || undefined
               });
               setIsSubmittingDocs(false);
             }}

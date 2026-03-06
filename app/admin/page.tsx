@@ -6,8 +6,8 @@ import { Users, Map, DollarSign, Settings, Activity, CheckCircle, XCircle, Alert
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function AdminPanel() {
-  const { users, currentUser, setCurrentUser, rides, sponsors, sponsoredLocations, hotspots, addHotspot, removeHotspot, updateHotspot, updateDriverClearance, deleteDriverAccount, immuTaxCollected } = useStore();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'rides' | 'finance' | 'sponsors' | 'hotspots'>('dashboard');
+  const { users, currentUser, setCurrentUser, rides, sponsors, sponsoredLocations, hotspots, addHotspot, removeHotspot, updateHotspot, updateDriverClearance, deleteDriverAccount, immuTaxCollected, violations, resolveViolation } = useStore();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'rides' | 'finance' | 'sponsors' | 'hotspots' | 'fleet_map'>('dashboard');
   const [isAddingHotspot, setIsAddingHotspot] = useState(false);
   const [newHotspot, setNewHotspot] = useState<Omit<Hotspot, 'id' | 'active'>>({
     name: '',
@@ -23,6 +23,12 @@ export default function AdminPanel() {
   const [rejectionModal, setRejectionModal] = useState<{ isOpen: boolean; userId: string; userName: string }>({ isOpen: false, userId: '', userName: '' });
   const [rejectionReason, setRejectionReason] = useState('');
   const [isDeleteArmed, setIsDeleteArmed] = useState(false);
+  const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [fleetSearch, setFleetSearch] = useState('');
+  const [geoFenceEnabled, setGeoFenceEnabled] = useState(true);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   useEffect(() => {
     if (!currentUser) {
       const admin = users.find(u => u.role === 'ADMIN');
@@ -56,6 +62,24 @@ export default function AdminPanel() {
     <div className="flex h-screen bg-[#050505] text-white font-sans overflow-hidden">
       {/* Sidebar */}
       <aside className="w-72 border-r border-white/10 flex flex-col relative z-20 bg-[#050505]/80 backdrop-blur-xl">
+        {/* Geo-Fence Global Alert (Simulation Phase 3) */}
+        <AnimatePresence>
+          {geoFenceEnabled && users.some(u => u.role === 'DRIVER' && u.status === 'ONLINE' && (u.location?.lat && u.location.lat > -2.9)) && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-red-500/20 border-b border-red-500/30 p-4 overflow-hidden"
+            >
+              <div className="flex items-center gap-2 text-red-400">
+                <AlertTriangle size={14} className="animate-pulse" />
+                <span className="text-[10px] font-bold uppercase tracking-widest">Alerta de Perímetro (Manaus)</span>
+              </div>
+              <p className="text-[9px] text-white/50 mt-1">Motorista cruzando limite da zona permitida.</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="p-8 border-b border-white/10">
           <h1 className="text-2xl font-bold tracking-tighter">INVIAGEM<span className="text-emerald-500">.</span></h1>
           <p className="text-xs font-mono tracking-widest text-white/40 mt-2 uppercase">Painel de Controle</p>
@@ -69,6 +93,7 @@ export default function AdminPanel() {
             { id: 'finance', icon: DollarSign, label: 'Financeiro' },
             { id: 'sponsors', icon: Megaphone, label: 'Patrocinadores (Ads)' },
             { id: 'hotspots', icon: Zap, label: 'Zonas de Demanda' },
+            { id: 'fleet_map', icon: Map, label: 'Mapa de Frotas' },
           ].map((item) => (
             <button
               key={item.id}
@@ -114,6 +139,7 @@ export default function AdminPanel() {
                 {activeTab === 'rides' && 'Monitoramento de Viagens'}
                 {activeTab === 'finance' && 'Relatórios Financeiros'}
                 {activeTab === 'sponsors' && 'Patrocinadores & Ads'}
+                {activeTab === 'fleet_map' && 'Mapa de Frotas (Tempo Real)'}
               </h2>
               <p className="text-white/50 mt-2 font-light tracking-wide">
                 Métricas em tempo real e controles do sistema.
@@ -212,6 +238,86 @@ export default function AdminPanel() {
                         {rides.length === 0 && (
                           <tr>
                             <td colSpan={5} className="p-12 text-center text-white/30 font-light">Nenhuma viagem registrada ainda.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {/* Geo-Fence Violations Log (Phase 3 Audit) */}
+                <div className="glass-panel rounded-[2rem] border border-red-500/10 overflow-hidden bg-red-500/[0.02]">
+                  <div className="p-8 border-b border-white/10 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle size={20} className="text-red-500" />
+                      <h3 className="text-xl font-light tracking-tight text-white">Log de Infrações de Perímetro (Auditoria)</h3>
+                    </div>
+                    <span className="text-[10px] font-mono tracking-[0.2em] text-red-500/50 uppercase">Tempo Real • GPS Manaus</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="text-xs font-mono uppercase tracking-widest text-white/30 border-b border-white/5">
+                          <th className="p-6 font-normal">Motorista</th>
+                          <th className="p-6 font-normal">Localização</th>
+                          <th className="p-6 font-normal">Severidade</th>
+                          <th className="p-6 font-normal">Status</th>
+                          <th className="p-6 font-normal">Hora</th>
+                          <th className="p-6 font-normal">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {violations.slice(0, 10).map(violation => {
+                          const driver = users.find(u => u.id === violation.driverId);
+                          return (
+                            <tr key={violation.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                              <td className="p-6">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 font-bold text-[10px]">
+                                    {driver?.name.charAt(0) || '?'}
+                                  </div>
+                                  <div>
+                                    <p className="font-medium text-white/90 text-sm">{driver?.name || 'Desconhecido'}</p>
+                                    <p className="text-[10px] font-mono text-white/40 uppercase tracking-tighter">{driver?.vehicle?.plate || 'S/ PLACA'}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <p className="text-xs text-white/60 truncate max-w-[200px]">{violation.addressText}</p>
+                                <p className="text-[9px] font-mono text-white/30 uppercase mt-1">{violation.lastKnownLocation.lat.toFixed(4)}, {violation.lastKnownLocation.lng.toFixed(4)}</p>
+                              </td>
+                              <td className="p-6">
+                                <span className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded border ${violation.severity === 'HIGH' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                  'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                                  }`}>
+                                  {violation.severity}
+                                </span>
+                              </td>
+                              <td className="p-6 text-sm text-white/40 font-mono">
+                                {violation.status === 'PENDING' ? (
+                                  <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div> Pendente</span>
+                                ) : (
+                                  <span className="flex items-center gap-2 text-emerald-400"><CheckCircle size={12} /> Resolvido</span>
+                                )}
+                              </td>
+                              <td className="p-6 text-sm text-white/40 font-mono">
+                                {new Date(violation.violationTime).toLocaleTimeString()}
+                              </td>
+                              <td className="p-6">
+                                {violation.status === 'PENDING' && (
+                                  <button
+                                    onClick={() => resolveViolation(violation.id)}
+                                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-xl border border-white/10 transition-all text-[10px] font-bold uppercase tracking-widest"
+                                  >
+                                    Arquivar
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {violations.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="p-12 text-center text-white/30 font-light">Nenhuma infração de perímetro detectada hoje.</td>
                           </tr>
                         )}
                       </tbody>
@@ -518,6 +624,238 @@ export default function AdminPanel() {
               </motion.div>
             )}
 
+            {activeTab === 'fleet_map' && (
+              <motion.div
+                key="fleet_map"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8 h-[calc(100vh-250px)]"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+                  {/* Driver List Sidebar (Phase 2 Filter) */}
+                  <div className="lg:col-span-1 glass-panel rounded-[2rem] border border-white/10 flex flex-col overflow-hidden">
+                    <div className="p-6 border-b border-white/10 bg-white/5 text-center">
+                      <p className="text-[10px] font-mono tracking-widest text-[#00a2e8] uppercase mb-1">Status da Frota em Manaus</p>
+                      <div className="flex justify-center gap-4 mt-2">
+                        <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div><span className="text-[8px] text-white/40">ONLINE</span></div>
+                        <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div><span className="text-[8px] text-white/40">CURSO</span></div>
+                        <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-white/20"></div><span className="text-[8px] text-white/40">OFF</span></div>
+                      </div>
+                    </div>
+                    <div className="p-6 border-b border-white/10">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                        <input
+                          type="text"
+                          placeholder="Filtrar por placa ou nome..."
+                          value={fleetSearch}
+                          onChange={e => setFleetSearch(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs outline-none focus:border-emerald-500/50"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                      {users.filter(u => u.role === 'DRIVER')
+                        .filter(u => !fleetSearch || u.name.toLowerCase().includes(fleetSearch.toLowerCase()) || u.vehicle?.plate.toLowerCase().includes(fleetSearch.toLowerCase()))
+                        .sort((a, b) => (a.status === 'OFFLINE' ? 1 : -1))
+                        .map(driver => (
+                          <div
+                            key={driver.id}
+                            onClick={() => setSelectedDriverId(selectedDriverId === driver.id ? null : driver.id)}
+                            className={`p-3 border rounded-2xl flex items-center gap-3 transition-all cursor-pointer group ${selectedDriverId === driver.id ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                          >
+                            <div className={`w-10 h-10 rounded-full border flex items-center justify-center text-sm font-bold shrink-0 transition-colors ${driver.status === 'ONLINE' ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' :
+                              driver.status === 'IN_RIDE' ? 'bg-blue-500/20 border-blue-500/30 text-blue-400' :
+                                'bg-white/5 border-white/10 text-white/30'
+                              }`}>
+                              {driver.name.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold truncate text-white/90">{driver.name}</p>
+                              <p className="text-[10px] font-mono text-white/40 tracking-wider">
+                                <span className="text-[#00a2e8]">{driver.vehicle?.plate || 'S/ PLACA'}</span>
+                                {driver.status === 'IN_RIDE' && <span className="ml-2 text-blue-400/50">• OCUPADO</span>}
+                              </p>
+                            </div>
+                            {driver.status !== 'OFFLINE' && (
+                              <div className="ml-auto flex flex-col items-end gap-1">
+                                <span className={`w-1.5 h-1.5 rounded-full ${driver.status === 'ONLINE' ? 'bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-blue-400 animate-pulse'}`}></span>
+                                <p className={`text-[8px] font-mono ${driver.status === 'ONLINE' ? 'text-emerald-400' : 'text-blue-400'}`}>{driver.status === 'ONLINE' ? 'GPS' : 'LIVE'}</p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Real-time Map Display (Phase 3 Visuals) */}
+                  <div className="lg:col-span-3 glass-panel rounded-[2rem] border border-white/10 overflow-hidden relative">
+                    <div className="absolute inset-0 bg-[#050505] overflow-hidden">
+                      {/* Technical Grid Overlay */}
+                      <div className="absolute inset-0 z-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
+
+                      {/* Heatmap Overlay (Phase 3 Simulator) */}
+                      <AnimatePresence>
+                        {showHeatmap && (
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="absolute inset-0 z-0 pointer-events-none"
+                          >
+                            <div className="absolute top-[30%] left-[40%] w-96 h-96 bg-red-600/10 blur-[100px] rounded-full"></div>
+                            <div className="absolute top-[50%] left-[20%] w-64 h-64 bg-orange-600/10 blur-[80px] rounded-full"></div>
+                            <div className="absolute bottom-[20%] right-[30%] w-80 h-80 bg-red-500/10 blur-[90px] rounded-full"></div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Driver Markers and Path (Phase 2 & 3) */}
+                      <div className="absolute inset-0 z-20">
+                        {users.filter(u => u.role === 'DRIVER' && u.status !== 'OFFLINE').map((driver, i) => {
+                          const isSelected = selectedDriverId === driver.id;
+                          return (
+                            <motion.div
+                              key={driver.id}
+                              initial={{ x: 200 + (i * 80), y: 150 + (i * 60) }}
+                              animate={isSelected ? {} : {
+                                x: [200 + (i * 80), 220 + (i * 80), 180 + (i * 80), 200 + (i * 80)],
+                                y: [150 + (i * 60), 130 + (i * 60), 170 + (i * 60), 150 + (i * 60)]
+                              }}
+                              transition={{ duration: 15 + i, repeat: Infinity, ease: "linear" }}
+                              className="absolute cursor-pointer"
+                              onClick={(e) => { e.stopPropagation(); setSelectedDriverId(isSelected ? null : driver.id); }}
+                            >
+                              <div className="relative group flex flex-col items-center">
+                                {/* SVG Path Tracer (Phase 2 Simulator) */}
+                                {isSelected && (
+                                  <svg className="absolute -top-64 -left-64 w-[512px] h-[512px] pointer-events-none opacity-20">
+                                    <polyline
+                                      points="256,256 220,200 180,240 100,200"
+                                      fill="none"
+                                      stroke={driver.status === 'ONLINE' ? '#10b981' : '#3b82f6'}
+                                      strokeWidth="2"
+                                      strokeDasharray="4 4"
+                                    />
+                                  </svg>
+                                )}
+
+                                {/* Pulse (Color by Status) */}
+                                <div className={`absolute w-12 h-12 rounded-full animate-ping scale-150 ${driver.status === 'ONLINE' ? 'bg-emerald-500/10' : 'bg-blue-500/10'
+                                  }`}></div>
+
+                                {/* Marker Icon */}
+                                <div className={`w-8 h-8 bg-black border-2 rounded-xl flex items-center justify-center transform rotate-45 shadow-2xl transition-all ${isSelected ? 'scale-125 z-50' : 'scale-100 z-10'
+                                  } ${driver.status === 'ONLINE' ? 'border-emerald-500 text-emerald-400' : 'border-blue-500 text-blue-400'
+                                  }`}>
+                                  <Activity size={14} className="-rotate-45" />
+                                </div>
+
+                                {/* Floating Tooltip */}
+                                <div className={`mt-3 bg-black/95 backdrop-blur-xl border border-white/10 p-3 rounded-2xl shadow-2xl z-40 transition-all pointer-events-none min-w-[140px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                                  }`}>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <div className={`w-1.5 h-1.5 rounded-full ${driver.status === 'ONLINE' ? 'bg-emerald-400' : 'bg-blue-400 animate-pulse'}`}></div>
+                                    <p className="text-[10px] font-bold text-white">{driver.name}</p>
+                                  </div>
+                                  <div className="flex justify-between items-center text-[8px] font-mono text-white/40 uppercase">
+                                    <span>{driver.vehicle?.plate || 'SEM PLACA'}</span>
+                                    <span className={driver.status === 'ONLINE' ? 'text-emerald-400/70' : 'text-blue-400/70'}>
+                                      {driver.status === 'ONLINE' ? 'Livre' : 'Em Rota'}
+                                    </span>
+                                  </div>
+                                  {isSelected && (
+                                    <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
+                                      <p className="text-[8px] text-[#00a2e8] tracking-widest uppercase">Ultima Atualização</p>
+                                      <p className="text-[9px] text-white/60">Há 4 segundos • GPS Ativo</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Control Panel Overlays (Phase 3) */}
+                      <div className="absolute top-6 right-6 flex flex-col gap-3 z-30">
+                        {/* Heatmap Toggle */}
+                        <button
+                          onClick={() => setShowHeatmap(!showHeatmap)}
+                          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all ${showHeatmap ? 'bg-red-500/20 border-red-500/40 text-red-500' : 'bg-black/60 border-white/10 text-white/40 hover:bg-black/80'
+                            }`}
+                        >
+                          <Zap size={16} />
+                          <span className="text-[10px] font-bold uppercase tracking-widest">Visualizar Hotspots</span>
+                        </button>
+
+                        {/* Geo-Fence Toggle */}
+                        <button
+                          onClick={() => setGeoFenceEnabled(!geoFenceEnabled)}
+                          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all ${geoFenceEnabled ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-500' : 'bg-black/60 border-white/10 text-white/40 hover:bg-black/80'
+                            }`}
+                        >
+                          <ShieldCheck size={16} />
+                          <span className="text-[10px] font-bold uppercase tracking-widest">Monitorar Perímetro</span>
+                        </button>
+                      </div>
+
+                      {/* Fleet Status Box */}
+                      <div className="absolute bottom-6 left-6 z-30">
+                        <div className="bg-black/80 backdrop-blur-3xl border border-white/15 p-6 rounded-[2.5rem] shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                          <div className="flex items-center gap-4 mb-4">
+                            <Activity size={18} className="text-emerald-400" />
+                            <h4 className="text-[10px] font-mono tracking-[0.2em] text-white/60 uppercase">Estatísticas Operacionais</h4>
+                          </div>
+                          <div className="flex gap-8">
+                            <div>
+                              <p className="text-3xl font-light text-white mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'ONLINE').length}</p>
+                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-emerald-400">
+                                <div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></div>
+                                LIVE
+                              </div>
+                            </div>
+                            <div className="w-[1px] bg-white/10"></div>
+                            <div>
+                              <p className="text-3xl font-light text-blue-400 mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'IN_RIDE').length}</p>
+                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-blue-400">
+                                OCUPADOS
+                              </div>
+                            </div>
+                            <div className="w-[1px] bg-white/10"></div>
+                            <div>
+                              <p className="text-3xl font-light text-[#00a2e8] mb-1">{rides.filter(r => r.status === 'MATCHING').length}</p>
+                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-[#00a2e8]">
+                                SOLICITAÇÕES
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Map Controls UI Overlay (Simulated Zoom) */}
+                      <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-30">
+                        <button className="w-10 h-10 bg-black/60 border border-white/10 rounded-xl flex items-center justify-center text-white/50 hover:text-white hover:bg-black/80 transition-colors backdrop-blur-xl">
+                          <Plus size={18} />
+                        </button>
+                        <button className="w-10 h-10 bg-black/60 border border-white/10 rounded-xl flex items-center justify-center text-white/50 hover:text-white hover:bg-black/80 transition-colors backdrop-blur-xl pointer-events-auto">
+                          <div className="w-4 h-0.5 bg-current"></div>
+                        </button>
+                      </div>
+
+                      <div className="absolute top-6 left-6 z-30">
+                        <div className="bg-black/60 backdrop-blur-xl border border-white/10 px-5 py-2.5 rounded-full flex items-center gap-4">
+                          <Map size={14} className="text-emerald-400" />
+                          <p className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase">Auditado: IMMU Manaus • v1.5</p>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
             {activeTab === 'hotspots' && (
               <motion.div
                 key="hotspots"
@@ -680,216 +1018,460 @@ export default function AdminPanel() {
                 </div>
               </motion.div>
             )}
-          </AnimatePresence>
-        </div>
-      </main>
 
-      {/* Document Viewer Modal - Moved outside main check */}
-      <AnimatePresence>
-        {isModalOpen && selectedDoc && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
-            style={{ pointerEvents: 'auto' }}
-            onClick={(e) => {
-              e.preventDefault();
-              setIsModalOpen(false);
-            }}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="bg-[#0a0a0a] border border-white/20 rounded-[2rem] w-full max-w-5xl h-[80vh] overflow-hidden flex flex-col shadow-[0_0_100px_rgba(0,0,0,0.8)]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/30">
-                    <FileText size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-light tracking-tight text-white">{selectedDoc.title}</h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <p className="text-[10px] font-mono text-emerald-400/70 uppercase tracking-widest">Acesso Criptografado Disponível</p>
+            {activeTab === 'rides' && (
+              <motion.div
+                key="rides"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8"
+              >
+                {/* Ativas Now */}
+                <div className="glass-panel rounded-[2rem] border border-blue-500/20 overflow-hidden bg-blue-500/[0.02]">
+                  <div className="p-8 border-b border-white/10 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
+                      <h3 className="text-xl font-light tracking-tight">Viagens em Curso (Live)</h3>
                     </div>
+                    <span className="text-[10px] font-mono tracking-[0.2em] text-blue-400/50 uppercase">{rides.filter(r => r.status === 'IN_PROGRESS' || r.status === 'DRIVER_ARRIVING').length} Ativas</span>
                   </div>
-                </div>
+                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {rides.filter(r => r.status === 'IN_PROGRESS' || r.status === 'DRIVER_ARRIVING').map(ride => {
+                      const passenger = users.find(u => u.id === ride.passengerId);
+                      const driver = users.find(u => u.id === ride.driverId);
+                      return (
+                        <div key={ride.id} className="bg-black/40 border border-white/10 rounded-3xl p-6 hover:border-blue-500/30 transition-all group">
+                          <div className="flex justify-between items-start mb-6">
+                            <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">ID: {ride.id.split('_')[1]}</span>
+                            <span className="bg-blue-500 text-black text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                              {ride.status === 'IN_PROGRESS' ? 'Em Trânsito' : 'Motorista Chegando'}
+                            </span>
+                          </div>
 
-                <div className="flex flex-row items-center gap-3">
-                  <button
-                    onClick={() => window.open(selectedDoc.url, '_blank')}
-                    className="px-4 py-2 bg-emerald-600 rounded-full font-bold uppercase tracking-widest text-xs hover:bg-emerald-500 transition-colors shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-                  >
-                    Abrir em Nova Guia
-                  </button>
-                  <button
-                    onClick={() => setIsModalOpen(false)}
-                    className="w-12 h-12 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all border border-white/10 active:scale-95"
-                  >
-                    <X size={24} />
-                  </button>
-                </div>
-              </div>
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-xs font-bold text-white/60">
+                                {passenger?.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[9px] uppercase tracking-widest text-white/30 mb-0.5">Passageiro</p>
+                                <p className="text-sm font-medium text-white/90 truncate">{passenger?.name}</p>
+                              </div>
+                            </div>
 
-              <div className="flex-1 bg-black/40 flex items-center justify-center relative">
-                {selectedDoc?.url && selectedDoc.url !== '#' ? (
-                  <div className="w-full h-full p-2">
-                    {selectedDoc.type === 'pdf' ? (
-                      <iframe
-                        src={`${selectedDoc.url}#toolbar=0`}
-                        className="w-full h-full rounded-2xl border border-white/5"
-                        title="Document Viewer"
-                      />
-                    ) : selectedDoc.type === 'image' ? (
-                      <div className="w-full h-full flex items-center justify-center p-4">
-                        <img src={selectedDoc.url} className="max-w-full max-h-full rounded-2xl shadow-2xl object-contain border border-white/10" alt="Documento" />
-                      </div>
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center text-center p-12">
-                        <div className="w-24 h-24 bg-blue-500/10 rounded-3xl flex items-center justify-center text-blue-400/30 mb-6 border border-blue-500/20">
-                          <Zap size={48} />
+                            <div className="py-2 flex flex-col gap-1 border-l-2 border-dashed border-white/10 ml-5 my-1">
+                              <div className="flex items-center gap-2 -ml-1">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                <p className="text-[10px] text-white/40 truncate">{ride.origin.address}</p>
+                              </div>
+                              <div className="flex items-center gap-2 -ml-1">
+                                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                <p className="text-[10px] text-white/40 truncate">{ride.destination.address}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-xs font-bold text-blue-400">
+                                {driver?.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[9px] uppercase tracking-widest text-[#00a2e8] mb-0.5">Motorista</p>
+                                <p className="text-sm font-medium text-white/90 truncate">{driver?.name}</p>
+                                <p className="text-[9px] font-mono text-white/40">{driver?.vehicle?.plate} • {driver?.vehicle?.model}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-center">
+                            <div>
+                              <p className="text-[9px] uppercase tracking-widest text-white/30">Valor Combinado</p>
+                              <p className="text-lg font-light text-emerald-400">R$ {ride.offeredPrice.toFixed(2)}</p>
+                            </div>
+                            <button className="p-2 rounded-full bg-white/5 text-white/40 hover:text-white hover:bg-white/10 transition-colors">
+                              <ChevronRight size={18} />
+                            </button>
+                          </div>
                         </div>
-                        <h4 className="text-xl font-light text-white/80 mb-2">Pacote Comprimido (ZIP)</h4>
-                        <p className="text-sm text-white/40 max-w-md leading-relaxed">
-                          Este arquivo deve ser baixado para análise local.
-                        </p>
-                        <a
-                          href={selectedDoc.url}
-                          download
-                          className="mt-8 px-8 py-3 bg-blue-600 text-white rounded-full font-bold text-xs uppercase tracking-widest hover:bg-blue-500 transition-colors"
-                        >
-                          Baixar Documentos
-                        </a>
-                      </div>
+                      )
+                    })}
+                    {rides.filter(r => r.status === 'IN_PROGRESS' || r.status === 'DRIVER_ARRIVING').length === 0 && (
+                      <div className="col-span-full py-12 text-center text-white/20 italic text-sm">Nenhuma viagem em curso neste momento.</div>
                     )}
                   </div>
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-center p-12">
-                    <div className="w-24 h-24 bg-red-500/10 rounded-3xl flex items-center justify-center text-red-500/20 mb-6 border border-red-500/20">
-                      <FileText size={48} />
+                </div>
+
+                {/* Historico */}
+                <div className="glass-panel rounded-[2rem] border border-white/10 overflow-hidden">
+                  <div className="p-8 border-b border-white/10 flex justify-between items-center">
+                    <h3 className="text-xl font-light tracking-tight">Histórico de Corridas (Finalizadas)</h3>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5">
+                        <span className="text-[10px] uppercase tracking-widest text-white/30 font-mono">De:</span>
+                        <input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                          className="bg-transparent border-none outline-none text-xs text-white/80 font-mono invert brightness-200"
+                        />
+                        <span className="text-[10px] uppercase tracking-widest text-white/30 font-mono ml-2">Até:</span>
+                        <input
+                          type="date"
+                          value={endDate}
+                          onChange={(e) => setEndDate(e.target.value)}
+                          className="bg-transparent border-none outline-none text-xs text-white/80 font-mono invert brightness-200"
+                        />
+                        {(startDate || endDate) && (
+                          <button
+                            onClick={() => { setStartDate(''); setEndDate(''); }}
+                            className="ml-2 text-[10px] text-red-400 hover:text-red-300 font-bold uppercase tracking-tighter"
+                          >
+                            Limpar
+                          </button>
+                        )}
+                      </div>
+                      <button className="px-4 py-2 bg-white/5 rounded-xl text-xs font-mono text-white/40 hover:text-white transition-colors border border-white/5">Exportar CSV</button>
                     </div>
-                    <h4 className="text-xl font-light text-white/80 mb-2">URL Não Encontrada</h4>
-                    <p className="text-sm text-white/40 max-w-md leading-relaxed">
-                      O link deste documento ainda não foi sincronizado com o Storage do Supabase ou o upload falhou.
-                    </p>
                   </div>
-                )}
-              </div>
+
+                  {/* Period Summary Stats */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 border-b border-white/5 bg-white/[0.01]">
+                    {(() => {
+                      const filteredHistory = rides.filter(r => {
+                        const isFinished = ['COMPLETED', 'PAID', 'CANCELLED'].includes(r.status);
+                        if (!isFinished) return false;
+
+                        const rideDate = new Date(r.createdAt);
+                        rideDate.setHours(0, 0, 0, 0);
+
+                        if (startDate) {
+                          const start = new Date(startDate);
+                          start.setHours(0, 0, 0, 0);
+                          if (rideDate < start) return false;
+                        }
+
+                        if (endDate) {
+                          const end = new Date(endDate);
+                          end.setHours(23, 59, 59, 999);
+                          if (rideDate > end) return false;
+                        }
+
+                        return true;
+                      });
+
+                      const periodTotal = filteredHistory.filter(r => r.status === 'PAID').reduce((acc, r) => acc + r.offeredPrice, 0);
+                      const periodTax = periodTotal * 0.09;
+                      const periodCount = filteredHistory.length;
+                      const periodSuccess = filteredHistory.filter(r => r.status === 'PAID' || r.status === 'COMPLETED').length;
+
+                      return (
+                        <>
+                          <div className="p-6 border-r border-white/5">
+                            <p className="text-[9px] uppercase tracking-widest text-white/30 mb-1">Volume Bruto (Período)</p>
+                            <p className="text-xl font-light text-white">R$ {periodTotal.toFixed(2)}</p>
+                          </div>
+                          <div className="p-6 border-r border-white/5">
+                            <p className="text-[9px] uppercase tracking-widest text-emerald-400/60 mb-1">Comissão App (9%)</p>
+                            <p className="text-xl font-light text-emerald-400">R$ {periodTax.toFixed(2)}</p>
+                          </div>
+                          <div className="p-6 border-r border-white/5">
+                            <p className="text-[9px] uppercase tracking-widest text-white/30 mb-1">Total de Chamadas</p>
+                            <p className="text-xl font-light text-white">{periodCount}</p>
+                          </div>
+                          <div className="p-6">
+                            <p className="text-[9px] uppercase tracking-widest text-blue-400/60 mb-1">Corridas Finalizadas</p>
+                            <p className="text-xl font-light text-blue-400">{periodSuccess}</p>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="text-xs font-mono uppercase tracking-widest text-white/30 border-b border-white/5">
+                          <th className="p-6 font-normal">Hora/Data</th>
+                          <th className="p-6 font-normal">Passageiro & Motorista</th>
+                          <th className="p-6 font-normal">Trajeto</th>
+                          <th className="p-6 font-normal">Status</th>
+                          <th className="p-6 font-normal">Preço</th>
+                          <th className="p-6 font-normal">Taxa App</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rides.filter(r => {
+                          const isFinished = ['COMPLETED', 'PAID', 'CANCELLED'].includes(r.status);
+                          if (!isFinished) return false;
+
+                          const rideDate = new Date(r.createdAt);
+                          rideDate.setHours(0, 0, 0, 0);
+
+                          if (startDate) {
+                            const start = new Date(startDate);
+                            start.setHours(0, 0, 0, 0);
+                            if (rideDate < start) return false;
+                          }
+
+                          if (endDate) {
+                            const end = new Date(endDate);
+                            end.setHours(23, 59, 59, 999);
+                            if (rideDate > end) return false;
+                          }
+
+                          return true;
+                        }).map(ride => {
+                          const passenger = users.find(u => u.id === ride.passengerId);
+                          const driver = users.find(u => u.id === ride.driverId);
+                          return (
+                            <tr key={ride.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                              <td className="p-6 font-mono text-xs text-white/40">
+                                {new Date(ride.createdAt).toLocaleDateString()}<br />
+                                <span className="text-white/60">{new Date(ride.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </td>
+                              <td className="p-6">
+                                <div className="space-y-1">
+                                  <p className="text-sm font-medium text-white/90">{passenger?.name || '---'}</p>
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-1 h-1 rounded-full bg-white/20"></div>
+                                    <p className="text-[10px] text-white/40 truncate max-w-[120px]">{driver?.name || 'N/A'}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <div className="max-w-[200px]">
+                                  <p className="text-[10px] text-white/60 truncate">{ride.origin.address}</p>
+                                  <p className="text-[10px] text-white/30 truncate mt-1">{ride.destination.address}</p>
+                                </div>
+                              </td>
+                              <td className="p-6">
+                                <span className={`px-3 py-1 rounded-full text-[9px] font-mono uppercase tracking-widest border ${ride.status === 'PAID' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                  ride.status === 'COMPLETED' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                    'bg-red-500/10 text-red-400 border-red-500/20'
+                                  }`}>
+                                  {ride.status}
+                                </span>
+                              </td>
+                              <td className="p-6 font-mono text-sm text-white/90">R$ {ride.offeredPrice.toFixed(2)}</td>
+                              <td className="p-6 font-mono text-xs text-emerald-400/60">R$ {(ride.offeredPrice * 0.09).toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </main >
+
+      {/* Document Viewer Modal */}
+      <AnimatePresence>
+        {
+          isModalOpen && selectedDoc && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
+              onClick={() => setIsModalOpen(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                className="bg-[#0a0a0a] border border-white/20 rounded-[2rem] w-full max-w-5xl h-[80vh] overflow-hidden flex flex-col shadow-[0_0_100px_rgba(0,0,0,0.8)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400 border border-emerald-500/30">
+                      <FileText size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-light tracking-tight text-white">{selectedDoc.title}</h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <p className="text-[10px] font-mono text-emerald-400/70 uppercase tracking-widest">Acesso Criptografado Disponível</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-row items-center gap-3">
+                    <button
+                      onClick={() => window.open(selectedDoc.url, '_blank')}
+                      className="px-4 py-2 bg-emerald-600 rounded-full font-bold uppercase tracking-widest text-xs hover:bg-emerald-500 transition-colors shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+                    >
+                      Abrir em Nova Guia
+                    </button>
+                    <button
+                      onClick={() => setIsModalOpen(false)}
+                      className="w-12 h-12 rounded-full bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all border border-white/10 active:scale-95"
+                    >
+                      <X size={24} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 bg-black/40 flex items-center justify-center relative">
+                  {selectedDoc?.url && selectedDoc.url !== '#' ? (
+                    <div className="w-full h-full p-2">
+                      {selectedDoc.type === 'pdf' ? (
+                        <iframe
+                          src={`${selectedDoc.url}#toolbar=0`}
+                          className="w-full h-full rounded-2xl border border-white/5"
+                          title="Document Viewer"
+                        />
+                      ) : selectedDoc.type === 'image' ? (
+                        <div className="w-full h-full flex items-center justify-center p-4">
+                          <img src={selectedDoc.url} className="max-w-full max-h-full rounded-2xl shadow-2xl object-contain border border-white/10" alt="Documento" />
+                        </div>
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-center p-12">
+                          <div className="w-24 h-24 bg-blue-500/10 rounded-3xl flex items-center justify-center text-blue-400/30 mb-6 border border-blue-500/20">
+                            <Zap size={48} />
+                          </div>
+                          <h4 className="text-xl font-light text-white/80 mb-2">Pacote Comprimido (ZIP)</h4>
+                          <p className="text-sm text-white/40 max-w-md leading-relaxed">
+                            Este arquivo deve ser baixado para análise local.
+                          </p>
+                          <a
+                            href={selectedDoc.url}
+                            download
+                            className="mt-8 px-8 py-3 bg-blue-600 text-white rounded-full font-bold text-xs uppercase tracking-widest hover:bg-blue-500 transition-colors"
+                          >
+                            Baixar Documentos
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-center p-12">
+                      <div className="w-24 h-24 bg-red-500/10 rounded-3xl flex items-center justify-center text-red-500/20 mb-6 border border-red-500/20">
+                        <FileText size={48} />
+                      </div>
+                      <h4 className="text-xl font-light text-white/80 mb-2">URL Não Encontrada</h4>
+                      <p className="text-sm text-white/40 max-w-md leading-relaxed">
+                        O link deste documento ainda não foi sincronizado com o Storage do Supabase ou o upload falhou.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )
+        }
+      </AnimatePresence >
 
       {/* Rejection Reason Modal */}
       <AnimatePresence>
-        {rejectionModal.isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
-            onClick={() => setRejectionModal({ ...rejectionModal, isOpen: false })}
-          >
+        {
+          rejectionModal.isOpen && (
             <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
-              className="bg-[#0a0a0a] border border-red-500/20 rounded-[2.5rem] w-full max-w-lg overflow-hidden flex flex-col shadow-[0_0_100px_rgba(255,0,0,0.1)]"
-              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
+              onClick={() => setRejectionModal({ ...rejectionModal, isOpen: false })}
             >
-              <div className="p-8 border-b border-white/10 bg-white/5">
-                <div className="flex items-center gap-4 mb-2">
-                  <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center text-red-500 border border-red-500/20">
-                    <XCircle size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-light tracking-tight text-white">Recusar Documentação</h3>
-                    <p className="text-xs text-white/40 uppercase tracking-widest mt-0.5">Motorista: {rejectionModal.userName}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-8 space-y-6">
-                <div>
-                  <label className="text-[10px] font-mono text-white/40 uppercase tracking-widest block mb-3">
-                    Motivo da Recusa / Instruções de Correção
-                  </label>
-                  <textarea
-                    autoFocus
-                    placeholder="Ex: CNH vencida ou Foto do CRLV está cortada. Por favor, envie novamente o arquivo completo."
-                    className="w-full h-32 bg-white/5 border border-white/10 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-red-500/50 transition-colors resize-none placeholder:text-white/20"
-                    value={rejectionReason}
-                    onChange={(e) => setRejectionReason(e.target.value)}
-                  />
-                  <p className="text-[10px] text-white/30 italic mt-3">
-                    Este texto será exibido no aplicativo do motorista para que ele saiba exatamente o que regularizar.
-                  </p>
-                </div>
-
-                <div className="pt-4 border-t border-white/5 space-y-4">
-                  <div className="flex items-center justify-between bg-red-500/5 p-4 rounded-2xl border border-red-500/10">
-                    <div>
-                      <h4 className="text-xs font-bold text-red-500 uppercase tracking-widest">Zona de Perigo</h4>
-                      <p className="text-[10px] text-white/40 mt-1">Excluir permanentemente este pré-cadastro</p>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                className="bg-[#0a0a0a] border border-red-500/20 rounded-[2.5rem] w-full max-w-lg overflow-hidden flex flex-col shadow-[0_0_100px_rgba(255,0,0,0.1)]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-8 border-b border-white/10 bg-white/5">
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center text-red-500 border border-red-500/20">
+                      <XCircle size={24} />
                     </div>
+                    <div>
+                      <h3 className="text-xl font-light tracking-tight text-white">Recusar Documentação</h3>
+                      <p className="text-xs text-white/40 uppercase tracking-widest mt-0.5">Motorista: {rejectionModal.userName}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-8 space-y-6">
+                  <div>
+                    <label className="text-[10px] font-mono text-white/40 uppercase tracking-widest block mb-3">
+                      Motivo da Recusa / Instruções de Correção
+                    </label>
+                    <textarea
+                      autoFocus
+                      placeholder="Ex: CNH vencida ou Foto do CRLV está cortada. Por favor, envie novamente o arquivo completo."
+                      className="w-full h-32 bg-white/5 border border-white/10 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-red-500/50 transition-colors resize-none placeholder:text-white/20"
+                      value={rejectionReason}
+                      onChange={(e) => setRejectionReason(e.target.value)}
+                    />
+                    <p className="text-[10px] text-white/30 italic mt-3">
+                      Este texto será exibido no aplicativo do motorista para que ele saiba exatamente o que regularizar.
+                    </p>
+                  </div>
+
+                  <div className="pt-4 border-t border-white/5 space-y-4">
+                    <div className="flex items-center justify-between bg-red-500/5 p-4 rounded-2xl border border-red-500/10">
+                      <div>
+                        <h4 className="text-xs font-bold text-red-500 uppercase tracking-widest">Zona de Perigo</h4>
+                        <p className="text-[10px] text-white/40 mt-1">Excluir permanentemente este pré-cadastro</p>
+                      </div>
+                      <button
+                        onClick={() => setIsDeleteArmed(!isDeleteArmed)}
+                        className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${isDeleteArmed ? 'bg-red-500 text-black' : 'bg-white/5 text-red-500 border border-red-500/20'}`}
+                      >
+                        {isDeleteArmed ? '🔒 Destravar' : '🔓 Trava de Segurança'}
+                      </button>
+                    </div>
+
+                    {isDeleteArmed && (
+                      <motion.button
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        onClick={async () => {
+                          const confirmed = window.confirm(`Tem CERTEZA que deseja APAGAR ${rejectionModal.userName}? Esta ação não pode ser desfeita.`);
+                          if (confirmed) {
+                            const success = await deleteDriverAccount(rejectionModal.userId);
+                            if (success) {
+                              setRejectionModal({ ...rejectionModal, isOpen: false });
+                              setIsDeleteArmed(false);
+                            }
+                          }
+                        }}
+                        className="w-full py-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-bold uppercase tracking-widest text-xs transition-colors flex items-center justify-center gap-2 shadow-[0_0_30px_rgba(220,38,38,0.2)]"
+                      >
+                        <Trash2 size={16} /> APAGAR REGISTRO PERMANENTEMENTE
+                      </motion.button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
                     <button
-                      onClick={() => setIsDeleteArmed(!isDeleteArmed)}
-                      className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${isDeleteArmed ? 'bg-red-500 text-black' : 'bg-white/5 text-red-500 border border-red-500/20'}`}
+                      onClick={() => setRejectionModal({ ...rejectionModal, isOpen: false })}
+                      className="py-4 bg-white/5 hover:bg-white/10 text-white/60 rounded-2xl font-bold uppercase tracking-widest text-xs transition-colors"
                     >
-                      {isDeleteArmed ? '🔒 Destravar' : '🔓 Trava de Segurança'}
+                      Cancelar
+                    </button>
+                    <button
+                      disabled={!rejectionReason.trim()}
+                      onClick={() => {
+                        updateDriverClearance(rejectionModal.userId, 'REJECTED', rejectionReason);
+                        setRejectionModal({ ...rejectionModal, isOpen: false });
+                        setRejectionReason('');
+                        setIsDeleteArmed(false);
+                      }}
+                      className="py-4 bg-red-500 disabled:bg-red-500/20 disabled:text-white/20 hover:bg-red-400 text-black rounded-2xl font-bold uppercase tracking-widest text-xs transition-all active:scale-95"
+                    >
+                      Confirmar Recusa
                     </button>
                   </div>
-
-                  {isDeleteArmed && (
-                    <motion.button
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      onClick={async () => {
-                        const confirmed = window.confirm(`Tem CERTEZA que deseja APAGAR ${rejectionModal.userName}? Esta ação não pode ser desfeita.`);
-                        if (confirmed) {
-                          const success = await deleteDriverAccount(rejectionModal.userId);
-                          if (success) {
-                            setRejectionModal({ ...rejectionModal, isOpen: false });
-                            setIsDeleteArmed(false);
-                          }
-                        }
-                      }}
-                      className="w-full py-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-bold uppercase tracking-widest text-xs transition-colors flex items-center justify-center gap-2 shadow-[0_0_30px_rgba(220,38,38,0.2)]"
-                    >
-                      <Trash2 size={16} /> APAGAR REGISTRO PERMANENTEMENTE
-                    </motion.button>
-                  )}
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={() => setRejectionModal({ ...rejectionModal, isOpen: false })}
-                    className="py-4 bg-white/5 hover:bg-white/10 text-white/60 rounded-2xl font-bold uppercase tracking-widest text-xs transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    disabled={!rejectionReason.trim()}
-                    onClick={() => {
-                      updateDriverClearance(rejectionModal.userId, 'REJECTED', rejectionReason);
-                      setRejectionModal({ ...rejectionModal, isOpen: false });
-                      setRejectionReason('');
-                      setIsDeleteArmed(false);
-                    }}
-                    className="py-4 bg-red-500 disabled:bg-red-500/20 disabled:text-white/20 hover:bg-red-400 text-black rounded-2xl font-bold uppercase tracking-widest text-xs transition-all active:scale-95"
-                  >
-                    Confirmar Recusa
-                  </button>
-                </div>
-              </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          )
+        }
+      </AnimatePresence >
+    </div >
   );
 }
