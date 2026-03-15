@@ -1,9 +1,28 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useStore, Ride, User, Hotspot } from '@/lib/store';
 import { Users, Map, DollarSign, Settings, Activity, CheckCircle, XCircle, AlertTriangle, Search, ChevronRight, Megaphone, Zap, Trash2, Plus, X, FileText, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleMap, useLoadScript, Marker, Circle, OverlayViewF } from '@react-google-maps/api';
+
+const MAP_LIBRARIES: ('places' | 'geometry' | 'visualization')[] = ['places', 'geometry', 'visualization'];
+
+const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { elementType: 'geometry', stylers: [{ color: '#0a0a0a' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#6b7280' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0a0a0a' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#374151' }] },
+  { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1f2937' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#111827' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#374151' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f2937' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0c4a6e' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#111827' }] },
+  { featureType: 'poi', elementType: 'labels.text', stylers: [{ visibility: 'off' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
 
 export default function AdminPanel() {
   const { users, currentUser, setCurrentUser, rides, sponsors, sponsoredLocations, hotspots, addHotspot, removeHotspot, updateHotspot, updateDriverClearance, deleteDriverAccount, immuTaxCollected, violations, resolveViolation } = useStore();
@@ -689,170 +708,18 @@ export default function AdminPanel() {
                     </div>
                   </div>
 
-                  {/* Real-time Map Display (Phase 3 Visuals) */}
-                  <div className="lg:col-span-3 glass-panel rounded-[2rem] border border-white/10 overflow-hidden relative">
-                    <div className="absolute inset-0 bg-[#050505] overflow-hidden">
-                      {/* Technical Grid Overlay */}
-                      <div className="absolute inset-0 z-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
-
-                      {/* Heatmap Overlay (Phase 3 Simulator) */}
-                      <AnimatePresence>
-                        {showHeatmap && (
-                          <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="absolute inset-0 z-0 pointer-events-none"
-                          >
-                            <div className="absolute top-[30%] left-[40%] w-96 h-96 bg-red-600/10 blur-[100px] rounded-full"></div>
-                            <div className="absolute top-[50%] left-[20%] w-64 h-64 bg-orange-600/10 blur-[80px] rounded-full"></div>
-                            <div className="absolute bottom-[20%] right-[30%] w-80 h-80 bg-red-500/10 blur-[90px] rounded-full"></div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      {/* Driver Markers and Path (Phase 2 & 3) */}
-                      <div className="absolute inset-0 z-20">
-                        {users.filter(u => u.role === 'DRIVER' && u.status !== 'OFFLINE').map((driver, i) => {
-                          const isSelected = selectedDriverId === driver.id;
-                          return (
-                            <motion.div
-                              key={driver.id}
-                              initial={{ x: 200 + (i * 80), y: 150 + (i * 60) }}
-                              animate={isSelected ? {} : {
-                                x: [200 + (i * 80), 220 + (i * 80), 180 + (i * 80), 200 + (i * 80)],
-                                y: [150 + (i * 60), 130 + (i * 60), 170 + (i * 60), 150 + (i * 60)]
-                              }}
-                              transition={{ duration: 15 + i, repeat: Infinity, ease: "linear" }}
-                              className="absolute cursor-pointer"
-                              onClick={(e) => { e.stopPropagation(); setSelectedDriverId(isSelected ? null : driver.id); }}
-                            >
-                              <div className="relative group flex flex-col items-center">
-                                {/* SVG Path Tracer (Phase 2 Simulator) */}
-                                {isSelected && (
-                                  <svg className="absolute -top-64 -left-64 w-[512px] h-[512px] pointer-events-none opacity-20">
-                                    <polyline
-                                      points="256,256 220,200 180,240 100,200"
-                                      fill="none"
-                                      stroke={driver.status === 'ONLINE' ? '#10b981' : '#3b82f6'}
-                                      strokeWidth="2"
-                                      strokeDasharray="4 4"
-                                    />
-                                  </svg>
-                                )}
-
-                                {/* Pulse (Color by Status) */}
-                                <div className={`absolute w-12 h-12 rounded-full animate-ping scale-150 ${driver.status === 'ONLINE' ? 'bg-emerald-500/10' : 'bg-blue-500/10'
-                                  }`}></div>
-
-                                {/* Marker Icon */}
-                                <div className={`w-8 h-8 bg-black border-2 rounded-xl flex items-center justify-center transform rotate-45 shadow-2xl transition-all ${isSelected ? 'scale-125 z-50' : 'scale-100 z-10'
-                                  } ${driver.status === 'ONLINE' ? 'border-emerald-500 text-emerald-400' : 'border-blue-500 text-blue-400'
-                                  }`}>
-                                  <Activity size={14} className="-rotate-45" />
-                                </div>
-
-                                {/* Floating Tooltip */}
-                                <div className={`mt-3 bg-black/95 backdrop-blur-xl border border-white/10 p-3 rounded-2xl shadow-2xl z-40 transition-all pointer-events-none min-w-[140px] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                                  }`}>
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <div className={`w-1.5 h-1.5 rounded-full ${driver.status === 'ONLINE' ? 'bg-emerald-400' : 'bg-blue-400 animate-pulse'}`}></div>
-                                    <p className="text-[10px] font-bold text-white">{driver.name}</p>
-                                  </div>
-                                  <div className="flex justify-between items-center text-[8px] font-mono text-white/40 uppercase">
-                                    <span>{driver.vehicle?.plate || 'SEM PLACA'}</span>
-                                    <span className={driver.status === 'ONLINE' ? 'text-emerald-400/70' : 'text-blue-400/70'}>
-                                      {driver.status === 'ONLINE' ? 'Livre' : 'Em Rota'}
-                                    </span>
-                                  </div>
-                                  {isSelected && (
-                                    <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
-                                      <p className="text-[8px] text-[#00a2e8] tracking-widest uppercase">Ultima Atualização</p>
-                                      <p className="text-[9px] text-white/60">Há 4 segundos • GPS Ativo</p>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Control Panel Overlays (Phase 3) */}
-                      <div className="absolute top-6 right-6 flex flex-col gap-3 z-30">
-                        {/* Heatmap Toggle */}
-                        <button
-                          onClick={() => setShowHeatmap(!showHeatmap)}
-                          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all ${showHeatmap ? 'bg-red-500/20 border-red-500/40 text-red-500' : 'bg-black/60 border-white/10 text-white/40 hover:bg-black/80'
-                            }`}
-                        >
-                          <Zap size={16} />
-                          <span className="text-[10px] font-bold uppercase tracking-widest">Visualizar Hotspots</span>
-                        </button>
-
-                        {/* Geo-Fence Toggle */}
-                        <button
-                          onClick={() => setGeoFenceEnabled(!geoFenceEnabled)}
-                          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all ${geoFenceEnabled ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-500' : 'bg-black/60 border-white/10 text-white/40 hover:bg-black/80'
-                            }`}
-                        >
-                          <ShieldCheck size={16} />
-                          <span className="text-[10px] font-bold uppercase tracking-widest">Monitorar Perímetro</span>
-                        </button>
-                      </div>
-
-                      {/* Fleet Status Box */}
-                      <div className="absolute bottom-6 left-6 z-30">
-                        <div className="bg-black/80 backdrop-blur-3xl border border-white/15 p-6 rounded-[2.5rem] shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-                          <div className="flex items-center gap-4 mb-4">
-                            <Activity size={18} className="text-emerald-400" />
-                            <h4 className="text-[10px] font-mono tracking-[0.2em] text-white/60 uppercase">Estatísticas Operacionais</h4>
-                          </div>
-                          <div className="flex gap-8">
-                            <div>
-                              <p className="text-3xl font-light text-white mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'ONLINE').length}</p>
-                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-emerald-400">
-                                <div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></div>
-                                LIVE
-                              </div>
-                            </div>
-                            <div className="w-[1px] bg-white/10"></div>
-                            <div>
-                              <p className="text-3xl font-light text-blue-400 mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'IN_RIDE').length}</p>
-                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-blue-400">
-                                OCUPADOS
-                              </div>
-                            </div>
-                            <div className="w-[1px] bg-white/10"></div>
-                            <div>
-                              <p className="text-3xl font-light text-[#00a2e8] mb-1">{rides.filter(r => r.status === 'MATCHING').length}</p>
-                              <div className="flex items-center gap-1.5 font-mono text-[8px] text-[#00a2e8]">
-                                SOLICITAÇÕES
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Map Controls UI Overlay (Simulated Zoom) */}
-                      <div className="absolute bottom-6 right-6 flex flex-col gap-2 z-30">
-                        <button className="w-10 h-10 bg-black/60 border border-white/10 rounded-xl flex items-center justify-center text-white/50 hover:text-white hover:bg-black/80 transition-colors backdrop-blur-xl">
-                          <Plus size={18} />
-                        </button>
-                        <button className="w-10 h-10 bg-black/60 border border-white/10 rounded-xl flex items-center justify-center text-white/50 hover:text-white hover:bg-black/80 transition-colors backdrop-blur-xl pointer-events-auto">
-                          <div className="w-4 h-0.5 bg-current"></div>
-                        </button>
-                      </div>
-
-                      <div className="absolute top-6 left-6 z-30">
-                        <div className="bg-black/60 backdrop-blur-xl border border-white/10 px-5 py-2.5 rounded-full flex items-center gap-4">
-                          <Map size={14} className="text-emerald-400" />
-                          <p className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase">Auditado: IMMU Manaus • v1.5</p>
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
+                  {/* Real-time Map — Google Maps */}
+                  <FleetMap
+                    users={users}
+                    rides={rides}
+                    hotspots={hotspots}
+                    showHeatmap={showHeatmap}
+                    setShowHeatmap={setShowHeatmap}
+                    geoFenceEnabled={geoFenceEnabled}
+                    setGeoFenceEnabled={setGeoFenceEnabled}
+                    selectedDriverId={selectedDriverId}
+                    setSelectedDriverId={setSelectedDriverId}
+                  />
                 </div>
               </motion.div>
             )}
@@ -1473,5 +1340,173 @@ export default function AdminPanel() {
         }
       </AnimatePresence >
     </div >
+  );
+}
+
+// ─── FleetMap Component ────────────────────────────────────────────────────────
+interface FleetMapProps {
+  users: User[];
+  rides: Ride[];
+  hotspots: Hotspot[];
+  showHeatmap: boolean;
+  setShowHeatmap: (v: boolean) => void;
+  geoFenceEnabled: boolean;
+  setGeoFenceEnabled: (v: boolean) => void;
+  selectedDriverId: string | null;
+  setSelectedDriverId: (id: string | null) => void;
+}
+
+function FleetMap({ users, rides, hotspots, showHeatmap, setShowHeatmap, geoFenceEnabled, setGeoFenceEnabled, selectedDriverId, setSelectedDriverId }: FleetMapProps) {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+  const { isLoaded, loadError } = useLoadScript({ googleMapsApiKey: apiKey, libraries: MAP_LIBRARIES });
+
+  const onlineDrivers = users.filter(u => u.role === 'DRIVER' && u.status !== 'OFFLINE');
+
+  // Default to Manaus center
+  const defaultCenter = { lat: -3.1190, lng: -60.0217 };
+
+  // Calculate center based on first online driver with location, or Manaus
+  const mapCenter = onlineDrivers.find(d => d.location)?.location
+    ? { lat: onlineDrivers.find(d => d.location)!.location!.lat, lng: onlineDrivers.find(d => d.location)!.location!.lng }
+    : defaultCenter;
+
+  if (loadError) {
+    return (
+      <div className="lg:col-span-3 glass-panel rounded-[2rem] border border-red-500/20 overflow-hidden flex items-center justify-center bg-red-500/5 min-h-[400px]">
+        <div className="text-center">
+          <p className="text-red-400 font-bold mb-2">⚠️ Erro ao carregar mapa</p>
+          <p className="text-white/40 text-xs">Verifique a chave da API Google Maps</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="lg:col-span-3 glass-panel rounded-[2rem] border border-white/10 overflow-hidden flex items-center justify-center min-h-[400px]">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-white/40 text-xs font-mono tracking-widest uppercase">Carregando mapa...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lg:col-span-3 glass-panel rounded-[2rem] border border-white/10 overflow-hidden relative min-h-[400px]">
+      {/* Google Map */}
+      <GoogleMap
+        mapContainerStyle={{ width: '100%', height: '100%', minHeight: 400 }}
+        center={mapCenter}
+        zoom={12}
+        options={{
+          styles: DARK_MAP_STYLE,
+          disableDefaultUI: true,
+          zoomControl: true,
+          gestureHandling: 'greedy',
+          backgroundColor: '#0a0a0a',
+        }}
+      >
+        {/* Driver Markers */}
+        {onlineDrivers.map(driver => {
+          if (!driver.location) return null;
+          const isSelected = selectedDriverId === driver.id;
+          const color = driver.status === 'ONLINE' ? '#10b981' : '#3b82f6';
+          return (
+            <Marker
+              key={driver.id}
+              position={{ lat: driver.location.lat, lng: driver.location.lng }}
+              onClick={() => setSelectedDriverId(isSelected ? null : driver.id)}
+              icon={{
+                path: 'M -8,-8 L 8,-8 L 8,8 L -8,8 Z',
+                fillColor: '#000000',
+                fillOpacity: 0.9,
+                strokeColor: color,
+                strokeWeight: isSelected ? 3 : 2,
+                scale: isSelected ? 1.5 : 1.2,
+                anchor: new (window as any).google.maps.Point(0, 0),
+              }}
+              label={{
+                text: driver.name.charAt(0),
+                color: color,
+                fontSize: '10px',
+                fontWeight: 'bold',
+              }}
+            />
+          );
+        })}
+
+        {/* Hotspot Circles (when heatmap is enabled) */}
+        {showHeatmap && hotspots.filter(h => h.active).map(hotspot => (
+          <Circle
+            key={hotspot.id}
+            center={{ lat: hotspot.lat, lng: hotspot.lng }}
+            radius={hotspot.radius}
+            options={{
+              fillColor: '#ef4444',
+              fillOpacity: 0.1,
+              strokeColor: '#ef4444',
+              strokeOpacity: 0.4,
+              strokeWeight: 1,
+            }}
+          />
+        ))}
+      </GoogleMap>
+
+      {/* UI Overlays on top of the map */}
+      {/* Top-right controls */}
+      <div className="absolute top-6 right-6 flex flex-col gap-3 z-30 pointer-events-auto">
+        <button
+          onClick={() => setShowHeatmap(!showHeatmap)}
+          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all text-left ${showHeatmap ? 'bg-red-500/20 border-red-500/40 text-red-400' : 'bg-black/70 border-white/10 text-white/50 hover:bg-black/90'}`}
+        >
+          <Zap size={16} />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Visualizar Hotspots</span>
+        </button>
+        <button
+          onClick={() => setGeoFenceEnabled(!geoFenceEnabled)}
+          className={`flex items-center gap-3 px-4 py-3 rounded-2xl border backdrop-blur-xl transition-all ${geoFenceEnabled ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' : 'bg-black/70 border-white/10 text-white/50 hover:bg-black/90'}`}
+        >
+          <ShieldCheck size={16} />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Monitorar Perímetro</span>
+        </button>
+      </div>
+
+      {/* Top-left badge */}
+      <div className="absolute top-6 left-6 z-30 pointer-events-none">
+        <div className="bg-black/70 backdrop-blur-xl border border-white/10 px-5 py-2.5 rounded-full flex items-center gap-4">
+          <Map size={14} className="text-emerald-400" />
+          <p className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase">Auditado: IMMU Manaus • v1.5</p>
+        </div>
+      </div>
+
+      {/* Bottom-left stats */}
+      <div className="absolute bottom-6 left-6 z-30 pointer-events-none">
+        <div className="bg-black/80 backdrop-blur-3xl border border-white/15 p-5 rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+          <div className="flex items-center gap-3 mb-4">
+            <Activity size={16} className="text-emerald-400" />
+            <h4 className="text-[9px] font-mono tracking-[0.2em] text-white/60 uppercase">Estatísticas Operacionais</h4>
+          </div>
+          <div className="flex gap-6">
+            <div>
+              <p className="text-3xl font-light text-white mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'ONLINE').length}</p>
+              <div className="flex items-center gap-1.5 font-mono text-[8px] text-emerald-400">
+                <div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></div>LIVE
+              </div>
+            </div>
+            <div className="w-[1px] bg-white/10" />
+            <div>
+              <p className="text-3xl font-light text-blue-400 mb-1">{users.filter(u => u.role === 'DRIVER' && u.status === 'IN_RIDE').length}</p>
+              <div className="font-mono text-[8px] text-blue-400">OCUPADOS</div>
+            </div>
+            <div className="w-[1px] bg-white/10" />
+            <div>
+              <p className="text-3xl font-light text-[#00a2e8] mb-1">{rides.filter(r => r.status === 'MATCHING').length}</p>
+              <div className="font-mono text-[8px] text-[#00a2e8]">SOLICITAÇÕES</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

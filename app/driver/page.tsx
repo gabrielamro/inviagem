@@ -20,7 +20,6 @@ const defaultCenter = {
 const libraries: ("places" | "geometry" | "visualization")[] = ["places", "geometry", "visualization"];
 
 export default function DriverApp() {
-  console.log("DRIVER_APP_LOADED_PORT_3020");
   const router = useRouter();
   const { users, currentUser, setCurrentUser, rides, updateRideStatus, updateDriverStatus, updateRidePrice, isDemoMode, setDemoMode, updateUserLocation, addChatMessage, hotspots, updateDriverClearance, addWalletBalance, registerUser, loginUser, submitDriverDocs, deleteDriverAccount } = useStore();
   const [activeTab, setActiveTab] = useState<'home' | 'earnings' | 'settings' | 'benefits' | 'wallet'>('home');
@@ -74,6 +73,8 @@ export default function DriverApp() {
   const [isDriveMode, setIsDriveMode] = useState(true);
   const [currentManeuver, setCurrentManeuver] = useState<string | null>(null);
   const [activeHotspot, setActiveHotspot] = useState<string | null>(null);
+  const [radarRadius, setRadarRadius] = useState(1);
+  const [searchMessage, setSearchMessage] = useState('Buscando passageiros próximos...');
 
   // Fase 1 & 2 States
   const [isGoingHome, setIsGoingHome] = useState(false);
@@ -92,13 +93,41 @@ export default function DriverApp() {
 
   const isOnline = currentUser?.status === 'ONLINE';
 
-  // Find incoming ride request
-  const incomingRide = rides.find(r =>
-    r.status === 'MATCHING' ||
-    (r.status === 'NEGOTIATING' && r.lastOfferBy === 'PASSENGER')
-  );
   // Find active ride for this driver
   const activeRide = rides.find(r => r.driverId === currentUser?.id && !['COMPLETED', 'PAID', 'CANCELLED'].includes(r.status));
+
+  // Expanded Radar logic (1km to 8km)
+  useEffect(() => {
+    if (isOnline && !activeRide) {
+      const interval = setInterval(() => {
+        setRadarRadius(prev => {
+          if (prev < 8) {
+            setSearchMessage(`Expandindo busca para ${prev + 1}km...`);
+            return prev + 1;
+          }
+          setSearchMessage('Monitorando alta demanda em 8km...');
+          return prev;
+        });
+      }, 5000); // Expands every 5 seconds
+      return () => {
+        clearInterval(interval);
+        setRadarRadius(1);
+        setSearchMessage('Buscando passageiros próximos...');
+      };
+    }
+  }, [isOnline, activeRide]);
+
+  // Find incoming ride request filtered by radar distance
+  const incomingRide = rides.find(r => {
+    const isMatching = r.status === 'MATCHING' || (r.status === 'NEGOTIATING' && r.lastOfferBy === 'PASSENGER');
+    if (!isMatching || !currentUser?.location || !window.google) return false;
+
+    const rideOrigin = new window.google.maps.LatLng(r.origin.lat, r.origin.lng);
+    const driverLoc = new window.google.maps.LatLng(currentUser.location.lat, currentUser.location.lng);
+    const distance = window.google.maps.geometry.spherical.computeDistanceBetween(driverLoc, rideOrigin) / 1000; // in km
+
+    return distance <= radarRadius;
+  });
 
   const handleFindBestSpot = () => {
     if (!currentUser?.location || !window.google) return;
@@ -1253,6 +1282,23 @@ export default function DriverApp() {
               </>
             )}
 
+            {/* My Car Location (When Online) */}
+            {isOnline && currentUser?.location && !carAnimPosition && (
+              <Marker
+                position={{ lat: currentUser.location.lat, lng: currentUser.location.lng }}
+                zIndex={51}
+                icon={{
+                  path: "M20,10 C20,5 30,0 50,0 C70,0 80,5 80,10 V90 C80,95 70,100 50,100 C30,100 20,95 20,90 Z M25,20 C25,20 35,15 50,15 C65,15 75,20 75,20 V35 C75,35 65,38 50,38 C35,38 25,35 25,35 Z M25,45 H75 V75 C75,75 60,80 50,80 C40,80 25,75 25,75 Z M18,25 L12,26 C11,27 11,33 12,34 L18,33 V25 Z M82,25 L88,26 C89,27 89,33 88,34 L82,33 V25 Z",
+                  scale: 0.35,
+                  fillColor: isOnline ? (activeRide ? "#ffeb3b" : "#00ff88") : "#ffffff",
+                  fillOpacity: 1,
+                  strokeWeight: 1.8,
+                  strokeColor: activeRide ? "#f59e0b" : "#065f46",
+                  anchor: new window.google.maps.Point(50, 50)
+                }}
+              />
+            )}
+
             {carAnimPosition && (
               <>
                 {/* Car Shadow */}
@@ -1274,14 +1320,14 @@ export default function DriverApp() {
                   position={carAnimPosition}
                   zIndex={51}
                   icon={{
-                    path: "M10,5 Q10,0 25,0 Q40,0 40,5 V95 Q40,100 25,100 Q10,100 10,95 Z",
-                    scale: 0.35,
-                    fillColor: "#FFC107",
+                    path: "M20,10 C20,5 30,0 50,0 C70,0 80,5 80,10 V90 C80,95 70,100 50,100 C30,100 20,95 20,90 Z M25,20 C25,20 35,15 50,15 C65,15 75,20 75,20 V35 C75,35 65,38 50,38 C35,38 25,35 25,35 Z M25,45 H75 V75 C75,75 60,80 50,80 C40,80 25,75 25,75 Z M18,25 L12,26 C11,27 11,33 12,34 L18,33 V25 Z M82,25 L88,26 C89,27 89,33 88,34 L82,33 V25 Z",
+                    scale: 0.45,
+                    fillColor: "#ffeb3b",
                     fillOpacity: 1,
-                    strokeWeight: 1,
-                    strokeColor: "#D97706",
+                    strokeWeight: 2,
+                    strokeColor: "#f59e0b",
                     rotation: carHeading,
-                    anchor: new window.google.maps.Point(25, 50)
+                    anchor: new window.google.maps.Point(50, 50)
                   }}
                 />
                 {/* Car Roof (Orange-Yellow) */}
@@ -1595,7 +1641,7 @@ export default function DriverApp() {
               </div>
               <p className="text-center text-white/40 max-w-[250px] text-xs font-light leading-relaxed">
                 {isOnline
-                  ? (isPaused ? 'Você está em pausa.' : 'Aguardando solicitações...')
+                  ? (isPaused ? 'Você está em pausa.' : searchMessage)
                   : 'Fique online para receber corridas.'}
               </p>
 

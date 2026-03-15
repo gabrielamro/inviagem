@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3020",
+    "dev:3020": "next dev -p 3020",
     "build": "next build",
-    "start": "xcopy .next\\static .next\\standalone\\.next\\static\\ /E /I /Y && set PORT=3020 && node .next/standalone/server.js",
+    "start": "xcopy .next\\static .next\\standalone\\.next\\static\\ /E /I /Y && echo. && echo [INVIAGEM] Servidor de Producao Local: http://localhost:3020 && set PORT=3020&& node .next/standalone/server.js",
+    "deploy:local": "echo [1/2] Gerando build de producao... && npm run build && echo [2/2] Build concluido! Iniciando servidor... && npm run start",
     "lint": "eslint .",
     "clean": "next clean"
   },
@@ -36,7 +38,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "9.39.1",
-    "eslint-config-next": "16.0.8",
+    "eslint-config-next": "^15.0.0",
     "firebase-tools": "^15.0.0",
     "supabase": "^2.76.16",
     "tailwindcss": "4.1.11",

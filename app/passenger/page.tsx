@@ -6,7 +6,7 @@ import { MapPin, Navigation, CreditCard, MessageSquare, ShieldAlert, Star, Searc
 import { motion, AnimatePresence } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { GoogleGenAI, Modality } from "@google/genai";
-import { GoogleMap, useLoadScript, Marker, DirectionsRenderer, Autocomplete, Polyline, TrafficLayerF } from '@react-google-maps/api';
+import { GoogleMap, useLoadScript, Marker, DirectionsRenderer, Autocomplete, Polyline, TrafficLayerF, OverlayViewF } from '@react-google-maps/api';
 
 const mapContainerStyle = {
   width: '100%',
@@ -39,6 +39,7 @@ export default function PassengerApp() {
   const [destination, setDestination] = useState('');
   const [originObj, setOriginObj] = useState<Location | null>(null);
   const [destObj, setDestObj] = useState<Location | null>(null);
+  const [extraStops, setExtraStops] = useState<{ id: string, address: string, obj: Location | null }[]>([]);
 
   const [category, setCategory] = useState<'X' | 'Comfort' | 'Black' | 'Moto Entrega' | 'Carro Entrega'>('X');
   const [showVehicleOptions, setShowVehicleOptions] = useState(false);
@@ -140,13 +141,15 @@ export default function PassengerApp() {
     }
   }, [directionsResponse, mapRef]);
 
-  // Login simulation
+  // Removido para permitir o login real via CPF
+  /*
   useEffect(() => {
     if (!currentUser || currentUser.role !== 'PASSENGER') {
       const passenger = users.find(u => u.role === 'PASSENGER');
       if (passenger) setCurrentUser(passenger);
     }
   }, [users, currentUser, setCurrentUser]);
+  */
 
   const activeRide = rides.find(r => r.passengerId === currentUser?.id && !['COMPLETED', 'PAID', 'CANCELLED'].includes(r.status));
 
@@ -273,17 +276,24 @@ export default function PassengerApp() {
     }
   };
 
-  const calculateRoute = async (originLoc: Location, destLoc: Location) => {
+  const calculateRoute = async (originLoc: Location, destLoc: Location, stops: any[] = extraStops) => {
     if (!window.google) {
       setCustomPrice(getEstimatedPrice(category));
       setShowVehicleOptions(true);
       return;
     }
     const directionsService = new window.google.maps.DirectionsService();
+
+    const waypoints = stops.filter(s => s.address).map(s => ({
+      location: s.address,
+      stopover: true
+    }));
+
     try {
       const results = await directionsService.route({
         origin: originLoc.address,
         destination: destLoc.address,
+        waypoints: waypoints,
         travelMode: window.google.maps.TravelMode.DRIVING,
       });
       setDirectionsResponse(results);
@@ -416,6 +426,7 @@ export default function PassengerApp() {
     if (foundUser) {
       setCurrentUser(foundUser);
     } else {
+      console.log("Falha no login para CPF:", authCpf);
       setAuthError("Passageiro não encontrado com este CPF.");
     }
   };
@@ -568,6 +579,49 @@ export default function PassengerApp() {
                     preserveViewport: true,
                   }}
                 />
+                {/* Início: Pin Redondo */}
+                <Marker
+                  position={directionsResponse.routes[0].legs[0].start_location}
+                  zIndex={50}
+                  icon={{
+                    path: window.google.maps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: "#3b82f6",
+                    fillOpacity: 1,
+                    strokeWeight: 3,
+                    strokeColor: "#ffffff",
+                  }}
+                />
+                {/* Waypoints Markers */}
+                {directionsResponse.routes[0].legs.length > 1 && directionsResponse.routes[0].legs.slice(0, -1).map((leg, i) => (
+                  i > 0 && (
+                    <Marker
+                      key={`stop-${i}`}
+                      position={leg.start_location}
+                      icon={{
+                        path: window.google.maps.SymbolPath.CIRCLE,
+                        scale: 6,
+                        fillColor: "#ffffff",
+                        fillOpacity: 1,
+                        strokeWeight: 2,
+                        strokeColor: "#3b82f6",
+                      }}
+                    />
+                  )
+                ))}
+                {/* Fim: Ponto Quadrado */}
+                <Marker
+                  position={directionsResponse.routes[0].legs[directionsResponse.routes[0].legs.length - 1].end_location}
+                  zIndex={50}
+                  icon={{
+                    path: "M -6,-6 L 6,-6 L 6,6 L -6,6 Z",
+                    scale: 1,
+                    fillColor: "#ffffff",
+                    fillOpacity: 1,
+                    strokeWeight: 3,
+                    strokeColor: "#3b82f6",
+                  }}
+                />
                 {/* Dynamic Route Polyline */}
                 <Polyline
                   key={activeRide?.id} // Force re-mount on new ride
@@ -701,20 +755,71 @@ export default function PassengerApp() {
               </>
             )}
 
-            {!directionsResponse && nearbyCars.map(car => (
+            {!directionsResponse && users.filter(u => u.role === 'DRIVER' && u.status === 'ONLINE' && u.location).map(driver => (
               <Marker
-                key={car.id}
-                position={{ lat: car.lat, lng: car.lng }}
+                key={driver.id}
+                position={{ lat: driver.location!.lat, lng: driver.location!.lng }}
                 icon={{
-                  path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: 6,
-                  fillColor: "#ffffff",
+                  path: "M20,10 C20,5 30,0 50,0 C70,0 80,5 80,10 V90 C80,95 70,100 50,100 C30,100 20,95 20,90 Z M25,20 C25,20 35,15 50,15 C65,15 75,20 75,20 V35 C75,35 65,38 50,38 C35,38 25,35 25,35 Z M25,45 H75 V75 C75,75 60,80 50,80 C40,80 25,75 25,75 Z M18,25 L12,26 C11,27 11,33 12,34 L18,33 V25 Z M82,25 L88,26 C89,27 89,33 88,34 L82,33 V25 Z",
+                  scale: 0.3,
+                  fillColor: "#00ff88",
                   fillOpacity: 1,
-                  strokeWeight: 2,
-                  strokeColor: "#3b82f6"
+                  strokeWeight: 1.5,
+                  strokeColor: "#065f46",
+                  anchor: new window.google.maps.Point(50, 50)
                 }}
               />
             ))}
+
+            {!directionsResponse && users.filter(u => u.role === 'DRIVER' && u.status === 'IN_RIDE' && u.location).map(driver => {
+              const driversActiveRide = rides.find(r => r.driverId === driver.id && !['COMPLETED', 'PAID', 'CANCELLED'].includes(r.status));
+              if (!driversActiveRide) return null;
+
+              const distToDriver = originObj ? window.google.maps.geometry.spherical.computeDistanceBetween(
+                new window.google.maps.LatLng(originObj.lat, originObj.lng),
+                new window.google.maps.LatLng(driver.location!.lat, driver.location!.lng)
+              ) : 0;
+
+              if (distToDriver > 10000) return null; // Only show busy drivers within 10km
+
+              return (
+                <React.Fragment key={driver.id}>
+                  {/* Current Position */}
+                  <Marker
+                    position={{ lat: driver.location!.lat, lng: driver.location!.lng }}
+                    icon={{
+                      path: "M20,10 C20,5 30,0 50,0 C70,0 80,5 80,10 V90 C80,95 70,100 50,100 C30,100 20,95 20,90 Z M25,20 C25,20 35,15 50,15 C65,15 75,20 75,20 V35 C75,35 65,38 50,38 C35,38 25,35 25,35 Z M25,45 H75 V75 C75,75 60,80 50,80 C40,80 25,75 25,75 Z M18,25 L12,26 C11,27 11,33 12,34 L18,33 V25 Z M82,25 L88,26 C89,27 89,33 88,34 L82,33 V25 Z",
+                      scale: 0.3,
+                      fillColor: "#ffeb3b",
+                      fillOpacity: 0.7,
+                      strokeWeight: 1.5,
+                      strokeColor: "#b45309",
+                      anchor: new window.google.maps.Point(50, 50)
+                    }}
+                  />
+                  {/* End Position Pin */}
+                  <Marker
+                    position={{ lat: driversActiveRide.destination.lat, lng: driversActiveRide.destination.lng }}
+                    icon={{
+                      path: window.google.maps.SymbolPath.CIRCLE,
+                      scale: 5,
+                      fillColor: "#f59e0b",
+                      fillOpacity: 1,
+                      strokeWeight: 2,
+                      strokeColor: "#ffffff",
+                    }}
+                  />
+                  <OverlayViewF
+                    position={{ lat: driversActiveRide.destination.lat, lng: driversActiveRide.destination.lng }}
+                    mapPaneName="overlayMouseTarget"
+                  >
+                    <div className="bg-orange-500/90 backdrop-blur-md text-white text-[9px] px-2 py-1 rounded-lg shadow-lg border border-white/20 whitespace-nowrap -translate-x-1/2 -translate-y-8 animate-bounce">
+                      Motorista em corrida (Fim aqui)
+                    </div>
+                  </OverlayViewF>
+                </React.Fragment>
+              );
+            })}
           </GoogleMap>
         ) : (
           <div className="w-full h-full bg-[#1a1a1a] flex items-center justify-center text-white/50">Carregando Mapa...</div>
@@ -967,6 +1072,40 @@ export default function PassengerApp() {
                         </div>
                       )}
                       <div className="absolute left-5 top-10 bottom-10 w-px bg-white/10"></div>
+
+                      {/* Paradas Extras */}
+                      {extraStops.map((stop, index) => (
+                        <div key={stop.id} className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5 transition-all animate-in slide-in-from-left-2 duration-300">
+                          <div className="w-2 h-2 rounded-full border-2 border-white/40 shadow-[0_0_8px_rgba(255,255,255,0.3)] shrink-0"></div>
+                          <div className="flex-1 relative flex items-center">
+                            <input
+                              type="text"
+                              placeholder={`Parada ${index + 1}`}
+                              className="bg-transparent w-full outline-none text-sm placeholder:text-white/30 text-white pr-8"
+                              value={stop.address}
+                              onChange={(e) => {
+                                const newStops = [...extraStops];
+                                newStops[index].address = e.target.value;
+                                setExtraStops(newStops);
+                              }}
+                              onBlur={() => {
+                                if (originObj && destObj) calculateRoute(originObj, destObj);
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const newStops = extraStops.filter((_, i) => i !== index);
+                                setExtraStops(newStops);
+                                if (originObj && destObj) calculateRoute(originObj, destObj, newStops);
+                              }}
+                              className="absolute right-0 text-white/30 hover:text-white transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
                       <div className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
                         <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
                         <div className="flex-1">
@@ -1042,10 +1181,20 @@ export default function PassengerApp() {
                         </div>
                       </div>
                       {/* Phase 4: Multiple Stops Button Mode */}
-                      <button className="text-[10px] text-blue-400 font-medium ml-12 flex items-center gap-1 mt-2 hover:text-blue-300 transition-colors">
+                      <button
+                        onClick={() => {
+                          if (extraStops.length < 3) {
+                            setExtraStops([...extraStops, { id: Math.random().toString(), address: '', obj: null }]);
+                          } else {
+                            alert("Máximo de 3 paradas extras atingido.");
+                          }
+                        }}
+                        className="text-[10px] text-blue-400 font-medium ml-12 flex items-center gap-1 mt-2 hover:text-blue-300 transition-colors"
+                      >
                         <Map size={12} />
                         Adicionar parada extra
                       </button>
+
                     </motion.div>
                   ) : (
                     <motion.div
@@ -1220,6 +1369,84 @@ export default function PassengerApp() {
                     </div>
                   </>
                 )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'history' && (
+            <motion.div
+              key="history"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="glass-panel rounded-[2rem] h-[65vh] flex flex-col pointer-events-auto border border-white/10 overflow-hidden"
+            >
+              <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                <h2 className="text-xl font-bold font-sans">Últimas Viagens</h2>
+                <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/50">
+                  <Clock size={16} />
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
+                {/* Historico Exemplo 1 */}
+                <div className="bg-white/5 rounded-2xl p-4 border border-white/10 hover:bg-white/10 transition-colors">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                        <CheckCircle2 size={14} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-white">Finalizada</div>
+                        <div className="text-[10px] text-white/50">Hoje, 14:30</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-bold text-white">R$ 35,40</div>
+                  </div>
+                  <div className="space-y-2 relative ml-3 border-l-2 border-white/10 pl-4 py-1">
+                    <div className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-white"></div>
+                    <div className="absolute -left-[5px] bottom-1.5 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                    <div className="text-xs text-white/70 truncate">Casa</div>
+                    <div className="text-xs font-medium text-white truncate">Shopping Paulista</div>
+                  </div>
+                  <button onClick={() => {
+                    setActiveTab('home');
+                    const newDest = { lat: -23.56, lng: -46.65, address: 'Shopping Paulista' };
+                    setDestination('Shopping Paulista'); setDestObj(newDest);
+                    if (originObj) calculateRoute(originObj, newDest);
+                  }} className="w-full mt-4 py-2 rounded-xl bg-white/5 text-[11px] font-bold uppercase tracking-wider text-white hover:bg-white/10 transition-colors">
+                    Pedir Novamente
+                  </button>
+                </div>
+
+                {/* Historico Exemplo 2 */}
+                <div className="bg-white/5 rounded-2xl p-4 border border-white/10 hover:bg-white/10 transition-colors">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                        <CheckCircle2 size={14} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-white">Finalizada</div>
+                        <div className="text-[10px] text-white/50">Ontem, 09:15</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-bold text-white">R$ 42,90</div>
+                  </div>
+                  <div className="space-y-2 relative ml-3 border-l-2 border-white/10 pl-4 py-1">
+                    <div className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-white"></div>
+                    <div className="absolute -left-[5px] bottom-1.5 w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                    <div className="text-xs text-white/70 truncate">Trabalho</div>
+                    <div className="text-xs font-medium text-white truncate">Aeroporto de Congonhas</div>
+                  </div>
+                  <button onClick={() => {
+                    setActiveTab('home');
+                    const newDest = { lat: -23.58, lng: -46.68, address: 'Aeroporto de Congonhas' };
+                    setDestination('Aeroporto de Congonhas'); setDestObj(newDest);
+                    if (originObj) calculateRoute(originObj, newDest);
+                  }} className="w-full mt-4 py-2 rounded-xl bg-white/5 text-[11px] font-bold uppercase tracking-wider text-white hover:bg-white/10 transition-colors">
+                    Pedir Novamente
+                  </button>
+                </div>
               </div>
             </motion.div>
           )}

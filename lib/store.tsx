@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from './supabaseClient';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 export type RideStatus =
   | 'CREATED'
@@ -158,70 +158,108 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [rides, setRides] = useState<Ride[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [violations, setViolations] = useState<Violation[]>([]);
 
-  // Carrega corridas do Supabase
+  const mapSupabaseRideToFront = useCallback((row: any): Ride => ({
+    id: row.id,
+    passengerId: row.passenger_id,
+    driverId: row.driver_id,
+    origin: { lat: row.origin_lat, lng: row.origin_lng, address: row.origin_address },
+    destination: { lat: row.dest_lat, lng: row.dest_lng, address: row.dest_address },
+    category: row.category,
+    status: row.status,
+    estimatedPrice: row.estimated_price,
+    offeredPrice: row.offered_price,
+    lastOfferBy: row.last_offer_by,
+    estimatedTime: row.estimated_time,
+    startTime: row.start_time,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  }), []);
+
+  // Carrega dados do Supabase (não bloqueia a renderização; falhas não travam a página)
   useEffect(() => {
-    const fetchAllUsers = async () => {
-      const { data: drivers, error: dError } = await supabase.from('drivers').select('*');
-      const { data: passengers, error: pError } = await supabase.from('passengers').select('*');
+    if (!isSupabaseConfigured) return;
 
-      if (!dError && !pError && drivers && passengers) {
-        const allUsers: User[] = [
-          ...drivers.map(d => ({
-            id: d.id,
-            name: d.name,
-            role: 'DRIVER' as const,
-            cpf: d.cpf,
-            driverStatus: d.driver_status,
-            walletBalance: d.wallet_balance,
-            status: d.status,
-            location: d.location,
-            vehicle: d.vehicle,
-            cnhUrl: d.cnh_url,
-            certificationUrl: d.certification_url,
-            profilePhotoUrl: d.profile_photo_url,
-            rejectionReason: d.rejection_reason
-          })),
-          ...passengers.map(p => ({
-            id: p.id,
-            name: p.name,
-            role: 'PASSENGER' as const,
-            walletBalance: p.wallet_balance
-          })),
-          { id: 'admin_001', name: 'Gabriela Amaro', role: 'ADMIN' as const }
-        ];
-        setUsers(allUsers);
+    const fetchAllUsers = async () => {
+      try {
+        const { data: drivers, error: dError } = await supabase.from('drivers').select('*');
+        const { data: passengers, error: pError } = await supabase.from('passengers').select('*');
+
+        if (dError) console.error("Erro ao carregar motoristas:", dError);
+        if (pError) console.error("Erro ao carregar passageiros:", pError);
+
+        if (!dError && !pError && drivers && passengers) {
+          console.log(`[STORE] Carregados ${drivers.length} motoristas e ${passengers.length} passageiros.`);
+          const allUsers: User[] = [
+            ...drivers.map((d: any) => ({
+              id: d.id,
+              name: d.name,
+              role: 'DRIVER' as const,
+              cpf: d.cpf,
+              driverStatus: d.driver_status,
+              walletBalance: d.wallet_balance,
+              status: d.status,
+              location: d.location,
+              vehicle: d.vehicle,
+              cnhUrl: d.cnh_url,
+              certificationUrl: d.certification_url,
+              profilePhotoUrl: d.profile_photo_url,
+              rejectionReason: d.rejection_reason
+            })),
+            ...passengers.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              role: 'PASSENGER' as const,
+              cpf: p.cpf,
+              walletBalance: p.wallet_balance
+            })),
+            { id: 'admin_001', name: 'Gabriela Amaro', role: 'ADMIN' as const }
+          ];
+          setUsers(allUsers);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar usuários:", err);
       }
     };
 
     const fetchActiveRides = async () => {
-      const { data, error } = await supabase
-        .from('rides')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
+      try {
+        const { data, error } = await supabase
+          .from('rides')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
 
-      if (!error && data) {
-        setRides(data.map(mapSupabaseRideToFront));
+        if (!error && data) {
+          setRides(data.map((row: any) => mapSupabaseRideToFront(row)));
+        }
+      } catch (_) {
+        // ignora erro; não bloqueia a UI
       }
     };
 
     const fetchViolations = async () => {
-      const { data, error } = await supabase
-        .from('geo_fence_violations')
-        .select('*')
-        .order('violation_time', { ascending: false });
+      try {
+        const { data, error } = await supabase
+          .from('geo_fence_violations')
+          .select('*')
+          .order('violation_time', { ascending: false });
 
-      if (!error && data) {
-        setViolations(data.map(v => ({
-          id: v.id,
-          driverId: v.driver_id,
-          violationTime: v.violation_time,
-          lastKnownLocation: { lat: v.last_known_location.lat, lng: v.last_known_location.lng },
-          addressText: v.address_text,
-          severity: v.severity,
-          status: v.status
-        })));
+        if (!error && data) {
+          setViolations(data.map((v: any) => ({
+            id: v.id,
+            driverId: v.driver_id,
+            violationTime: v.violation_time,
+            lastKnownLocation: { lat: v.last_known_location?.lat, lng: v.last_known_location?.lng },
+            addressText: v.address_text,
+            severity: v.severity,
+            status: v.status
+          })));
+        }
+      } catch (_) {
+        // ignora erro
       }
     };
 
@@ -229,7 +267,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     fetchAllUsers();
     fetchViolations();
 
-    // Assinaturas Realtime
     const driversChannel = supabase.channel('drivers_channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, fetchAllUsers)
       .subscribe();
@@ -247,25 +284,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       supabase.removeChannel(passengersChannel);
       supabase.removeChannel(violationsChannel);
     };
-  }, []);
+  }, [mapSupabaseRideToFront]);
 
-  const mapSupabaseRideToFront = (row: any): Ride => ({
-    id: row.id,
-    passengerId: row.passenger_id,
-    driverId: row.driver_id,
-    origin: { lat: row.origin_lat, lng: row.origin_lng, address: row.origin_address },
-    destination: { lat: row.dest_lat, lng: row.dest_lng, address: row.dest_address },
-    category: row.category,
-    status: row.status,
-    estimatedPrice: row.estimated_price,
-    offeredPrice: row.offered_price,
-    lastOfferBy: row.last_offer_by,
-    estimatedTime: row.estimated_time,
-    startTime: row.start_time,
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
-  });
-  const [users, setUsers] = useState<User[]>([]);
   const [immuTaxCollected, setImmuTaxCollected] = useState(0);
   const [sponsors, setSponsors] = useState<Sponsor[]>([
     { id: 's1', name: 'Hamburgueria do Zé', active: true },
@@ -327,8 +347,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   ]);
 
-  const [violations, setViolations] = useState<Violation[]>([]);
-
   const resolveViolation = useCallback(async (id: string) => {
     setViolations(prev => prev.map(v => v.id === id ? { ...v, status: 'RESOLVED' } : v));
     await supabase.from('geo_fence_violations').update({ status: 'RESOLVED' }).eq('id', id);
@@ -348,16 +366,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const registerUser = useCallback(async (userData: Omit<User, 'id'>) => {
     const tableName = userData.role === 'PASSENGER' ? 'passengers' : 'drivers';
+    const normalizedCpf = userData.cpf ? userData.cpf.replace(/\D/g, '') : '';
     const insertData: any = {
       name: userData.name,
-      cpf: userData.cpf,
+      cpf: normalizedCpf,
       wallet_balance: userData.walletBalance || 0,
     };
 
     if (userData.role === 'DRIVER') {
+      insertData.role = 'DRIVER'; // Necessário para a restrição NOT NULL na tabela drivers
       insertData.driver_status = userData.driverStatus || 'PENDING_DOCS';
       insertData.status = userData.status || 'OFFLINE';
     }
+
+    console.log(`[STORE] Tentando registrar ${userData.role}:`, insertData);
 
     const { data, error } = await supabase
       .from(tableName)
@@ -366,18 +388,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       .single();
 
     if (error) {
-      console.error(`Erro ao registrar ${userData.role} no Supabase:`, error);
+      console.error(`[STORE] Erro ao registrar ${userData.role} no Supabase:`, error.message, error.code);
       return null;
     }
+
+    console.log(`[STORE] Registro bem-sucedido: ID=${data.id}`);
+
+    console.log(`[STORE] Registro bem-sucedido: ID=${data.id}`);
 
     const newUser: User = {
       id: data.id,
       name: data.name,
       role: userData.role as any,
       cpf: data.cpf,
-      driverStatus: data.driver_status,
-      walletBalance: data.wallet_balance,
-      status: data.status
+      driverStatus: data.driver_status || undefined,
+      walletBalance: data.wallet_balance ? Number(data.wallet_balance) : 0,
+      status: data.status || undefined
     };
 
     setUsers(prev => [...prev, newUser]);
@@ -386,29 +412,54 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const loginUser = useCallback(async (cpf: string, role: string) => {
     const tableName = role === 'PASSENGER' ? 'passengers' : 'drivers';
-    const { data, error } = await supabase
+    const normalizedCpf = cpf.replace(/\D/g, '');
+    
+    console.log(`[STORE] Login attempt: role=${role}, cpf=${cpf}, normalized=${normalizedCpf}`);
+
+    // Try Supabase first
+    const { data: dbUser, error: dbError } = await supabase
       .from(tableName)
       .select('*')
-      .eq('cpf', cpf)
+      .eq('cpf', normalizedCpf)
       .single();
 
-    if (error || !data) {
-      console.error("Erro no login:", error);
-      return null;
+    if (dbError) {
+      console.warn(`[STORE] Supabase login error for ${normalizedCpf}:`, dbError.message);
     }
 
-    const foundUser: User = {
-      id: data.id,
-      name: data.name,
-      role: role as any,
-      cpf: data.cpf,
-      driverStatus: data.driver_status,
-      walletBalance: data.wallet_balance,
-      status: data.status
-    };
+    let userToReturn: User | null = null;
 
-    return foundUser;
-  }, []);
+    if (dbUser) {
+      console.log(`[STORE] User found in Supabase: ${dbUser.name}`);
+      userToReturn = {
+        id: dbUser.id,
+        name: dbUser.name,
+        role: role as any,
+        cpf: dbUser.cpf,
+        driverStatus: dbUser.driver_status || undefined,
+        walletBalance: dbUser.wallet_balance ? Number(dbUser.wallet_balance) : 0,
+        status: dbUser.status || undefined
+      };
+    } else {
+      // Fallback: search in the loaded users list (in case of RLS or other Supabase issues)
+      console.log(`[STORE] Not found in Supabase table ${tableName}. Checking local users list...`);
+      const localUser = users.find(u => 
+        u.role === role && 
+        (u.cpf?.replace(/\D/g, '') === normalizedCpf)
+      );
+      
+      if (localUser) {
+        console.log(`[STORE] User found in local list: ${localUser.name}`);
+        userToReturn = localUser;
+      }
+    }
+
+    if (!userToReturn) {
+      console.error(`[STORE] No user found for CPF ${normalizedCpf} in ${role} role.`);
+    }
+
+    return userToReturn;
+  }, [users]);
 
   const submitDriverDocs = useCallback(async (userId: string, vehicleData: any, files: { cnh?: File, crlv?: File, certification?: File, profile?: File }) => {
     try {
