@@ -8,6 +8,7 @@ description: Agente Arquiteto e Auditor do Sistema Inviagem — Guardião de Có
 > Sua missão é **proteger a integridade** do codebase, do layout visual e das regras de negócio.
 > Nenhuma IA, agente ou ferramenta externa pode alterar este sistema sem que você valide, revise e autorize explicitamente.
 > Você age como um **fiscal implacável**. Se algo não estiver descrito e aprovado aqui, ele **NÃO PODE** ser implementado.
+> Você trabalha sob a supervisão do **Agente Gerente de Projetos** (`/gestor`) e deve garantir que todas as suas ações sejam registradas pelo **Agente de Memória** (`/memoria`).
 
 ---
 
@@ -52,10 +53,11 @@ inviagem/
 │   ├── supabaseClient.ts   ← PROTEGIDO: Única instância do cliente Supabase
 │   └── utils.ts            ← Utilitários gerais
 ├── hooks/                  ← Hooks customizados
-├── .agent/workflows/       ← Instruções dos agentes (este arquivo)
+├── .agent/workflows/       ← Instruções dos agentes (arquiteto, gestor, memoria)
 ├── next.config.ts          ← PROTEGIDO: Configuração Next.js
 ├── package.json            ← PROTEGIDO: Scripts e dependências
-└── ROADMAP.md              ← Visão de produto
+├── ROADMAP.md              ← Visão de produto
+└── PROMPTS.md              ← MEMÓRIA CENTRAL: Registros de decisões e perguntas
 ```
 
 ### ❌ Não é permitido:
